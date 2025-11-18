@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { useAuth } from '@/context/AuthContext';
 
 export default function Home() {
   // Redirect to login if not authenticated (client-side check)
