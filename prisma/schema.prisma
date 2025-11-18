@@ -1,0 +1,80 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  apiKeyHash   String?
+  createdAt    DateTime @default(now())
+  sessions     AgentSession[]
+  tasks        Task[]   @relation("AgentTasks")
+}
+
+model Task {
+  id          String   @id @default(uuid())
+  action      String
+  status      String   @default("pending")
+  agentId     String?  @map("agent_id")
+  agent       Agent?   @relation(fields: [agentId], references: [id], name: "AgentTasks")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AgentSession {
+  id        String   @id @default(uuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id])
+  connected Boolean  @default(true)
+  meta      Json?
+  startedAt DateTime @default(now())
+  endedAt   DateTime?
+}
+
+model AgentTask {
+  id         Int     @id @default(autoincrement())
+  taskId     String  @unique
+  agentName  String
+  status     String
+  input      Json?
+  output     Json?
+  duration   Int?
+  completedAt DateTime?
+  createdAt  DateTime @default(now())
+  @@map("agent_tasks")
+}
+
+model AgentEvent {
+  id        Int     @id @default(autoincrement())
+  taskId    String
+  agentName String
+  type      String
+  payload   Json?
+  status    String?
+  duration  Int?
+  createdAt DateTime @default(now())
+  @@map("agent_events")
+}
+
+model SessionLog {
+  id        Int     @id @default(autoincrement())
+  sessionId String
+  eventType String
+  payload   Json?
+  createdAt DateTime @default(now())
+  @@map("session_logs")
+}
+
+model CollabSession {
+  id         String   @id @default(uuid())
+  sessionId  String   @unique
+  taskId     String?
+  meta       Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

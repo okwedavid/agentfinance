@@ -1,0 +1,1 @@
+export default function Home(){ return (<main><h1 className='text-4xl font-bold'>AgentFinance</h1><p className='mt-4 text-gray-300'>Realtime agent orchestration platform.</p></main>); }

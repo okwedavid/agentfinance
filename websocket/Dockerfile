@@ -1,0 +1,26 @@
+# websocket/Dockerfile
+FROM node:20-slim
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    bash \
+    openssl \
+    ca-certificates \
+    git \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY package*.json ./
+RUN npm install --omit=dev
+
+COPY . .
+
+# WebSocket server port
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD curl -f http://localhost:5000/health || exit 1
+
+CMD ["npm", "start"]

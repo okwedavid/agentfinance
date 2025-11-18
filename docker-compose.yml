@@ -1,0 +1,97 @@
+services:
+  redis:
+    image: redis:7
+    container_name: agentfinance-redis-1
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
+  db:
+    image: postgres:16
+    container_name: agentfinance-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: agentfi
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agentfinance-backend
+    env_file: .env
+    environment:
+      - REPLAY_ENABLED=${REPLAY_ENABLED}
+    ports:
+      - "4000:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  coordinator:
+    build:
+      context: ./coordinator
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on:
+      - redis
+      - db
+
+  subtask-worker:
+    build:
+      context: ./subtask-worker
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on:
+      - redis
+      - db
+    deploy:
+      replicas: 3
+
+  websocket:
+    build:
+      context: ./websocket
+      dockerfile: Dockerfile
+    container_name: agentfinance-websocket
+    env_file: .env
+    ports:
+      - "5000:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const WebSocket = require('ws'); const ws = new WebSocket('ws://localhost:5000'); ws.on('open', () => { process.exit(0); }); ws.on('error', () => { process.exit(1); }); setTimeout(() => process.exit(1), 3000);\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - REPLAY_ENABLED=${REPLAY_ENABLED}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+      - websocket
+
+volumes:
+  db-data:

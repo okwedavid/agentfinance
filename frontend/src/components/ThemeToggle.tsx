@@ -1,0 +1,3 @@
+'use client';
+import { useEffect, useState } from 'react';
+export default function ThemeToggle(){ const [theme,setTheme]=useState<'dark'|'light'>('dark'); useEffect(()=>{ const t=localStorage.getItem('agentfi_theme') as 'dark'|'light'|null; if(t) setTheme(t); document.documentElement.classList.toggle('light', t==='light'); },[]); const toggle=()=>{ const next=theme==='dark'?'light':'dark'; setTheme(next); localStorage.setItem('agentfi_theme', next); document.documentElement.classList.toggle('light', next==='light'); }; return (<button onClick={toggle} className="px-3 py-1 bg-gray-800 rounded">{theme==='dark'?'🌙':'☀️'}</button>); }
