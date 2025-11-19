@@ -7,7 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 const WS_URL = typeof window !== 'undefined' ? (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.hostname.replace(/:\d+$/, ':5000') : '';
 
 export default function AgentsPage() {
-  const { token } = useAuth();
+  //const { token } = useAuth();
   const wsToken = typeof window !== 'undefined' ? (localStorage.getItem('token') || '') : '';
   const { parsedMessages } = useWebSocket(WS_URL, wsToken);
 
