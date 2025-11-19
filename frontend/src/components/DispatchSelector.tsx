@@ -4,7 +4,8 @@ import { API_URL } from '@/lib/env';
 import { useAuth } from '@/context/AuthContext';
 
 export default function DispatchSelector({ taskId }: { taskId: string }) {
-  const { token } = useAuth();
+  const auth = useAuth();
+  const token = (auth as any).token;
   const [agents, setAgents] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
