@@ -18,7 +18,7 @@ const CoordinatorControlRoom = () => {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
         <motion.div layout className="col-span-1">
-          <AgentCard agents = {agents} onSelect={setSelectedAgent} />
+          <AgentCard agent={agents} />
         </motion.div>
         <motion.div layout className="col-span-2">
           <TaskFlowChart tasks={tasks} />
