@@ -23,7 +23,14 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || '
 
 export async function apiFetch(path: string, options?: RequestInit) {
   const url = `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
-  const res = await fetch(url, options);
+  const token = localStorage.getItem('token'); // ADD THIS
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...options?.headers,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}), // ADD THIS
+    },
+  });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }

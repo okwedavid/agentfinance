@@ -237,3 +237,13 @@ app.listen(port, async () => {
     console.error('❌ Database initialization failed:', err.message);
   }
 });
+
+app.get('/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const u = await prisma.user.findUnique({ where: { id: req.user.sub } });
+    if (!u) return res.status(404).json({ error: 'not found' });
+    res.json({ id: u.id, username: u.username });
+  } catch (e) {
+    res.status(500).json({ error: 'failed' });
+  }
+});

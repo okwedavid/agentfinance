@@ -45,6 +45,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       body: JSON.stringify({ username, password }),
       credentials: 'include',
     });
+    localStorage.setItem('token', j.token);
     setUser({ id: j.id, username: j.username });
     setLoading(false);
   };
