@@ -2,7 +2,13 @@ import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import IORedis from 'ioredis';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+});
 const router = express.Router();
 const redis = new IORedis(process.env.REDIS_URL || 'redis://redis:6379');
 

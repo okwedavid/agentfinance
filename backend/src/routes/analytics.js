@@ -2,7 +2,13 @@ import express from 'express';
 import { PrismaClient } from '@prisma/client';
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+});
 
 // GET /analytics/summary - aggregate summary for charts
 // DEMO_MODE: when true the API will report a forced successRate (for investor demo)
