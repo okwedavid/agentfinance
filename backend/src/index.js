@@ -20,7 +20,13 @@ let agentTasksRouter = null;
 // JWT secret
 const JWT_SECRET = process.env.JWT_SECRET || 'please_change_me_locally';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+});
 const app = express();
 
 app.use(cors({ origin: true, credentials: true }));

@@ -4,7 +4,13 @@ import redis from '../redisClient.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+});
 
 // GET / -> replay events for a sessionId query param
 router.get('/', async (req, res) => {
