@@ -2,13 +2,25 @@
 const WebSocket = require('ws');
 const Redis = require('ioredis');
 const jwt = require('jsonwebtoken');
+const http = require('http');
 
-const PORT = process.env.PORT_WS || 5000;
+const PORT = parseInt(process.env.PORT_WS || process.env.PORT || '5000', 10);
 const REDIS_URL = process.env.REDIS_URL || 'redis://redis:6379';
 const JWT_SECRET = process.env.JWT_SECRET || 'please_change_me_locally';
 
-const wss = new WebSocket.Server({ port: PORT });
-console.log(`WebSocket server started on ws://0.0.0.0:${PORT}`);
+// Create a small HTTP server so we can expose a /health endpoint for container healthchecks
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ status: 'ok', time: Date.now() }));
+  }
+  // simple root
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('WebSocket server');
+});
+
+const wss = new WebSocket.Server({ server });
+server.listen(PORT, () => console.log(`WebSocket server started on ws://0.0.0.0:${PORT}`));
 
 const sub = new Redis(REDIS_URL);
 const pub = new Redis(REDIS_URL);

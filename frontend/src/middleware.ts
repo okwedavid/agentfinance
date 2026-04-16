@@ -1,17 +1,11 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
+// Middleware kept as a no-op to avoid server-side redirects which caused
+// blinking behaviour. All auth/redirect logic is handled client-side in
+// the dashboard and login components (per project requirements).
 export function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
-  if (pathname.startsWith('/analytics') || pathname.startsWith('/dashboard')) {
-    const token = req.cookies.get('af_token') || req.cookies.get('token');
-    if (!token) {
-      const url = req.nextUrl.clone();
-      url.pathname = '/auth';
-      return NextResponse.redirect(url);
-    }
-  }
   return NextResponse.next();
 }
 
-export const config = { matcher: ['/analytics/:path*', '/dashboard/:path*'] };
+export const config = { matcher: [] };
