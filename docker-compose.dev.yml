@@ -1,0 +1,37 @@
+version: '3.9'
+services:
+  backend:
+    build: ./backend
+    volumes:
+      - ./backend:/app              # ← LIVE CODE MOUNT
+      - /app/node_modules           # ← keep node_modules inside container
+    command: npm run dev            # ← uses nodemon/ts-node-dev → auto restart
+    ports: ["4000:4000"]
+    environment:
+      - NODE_ENV=development
+
+  frontend:
+    build: ./frontend
+    volumes:
+      - ./frontend:/app             # ← LIVE CODE MOUNT
+      - /app/node_modules
+    command: npm run dev            # ← Next.js hot reload (instant!)
+    ports: ["3000:3000"]
+
+  websocket:
+    build: ./websocket
+    volumes:
+      - ./websocket:/app
+      - /app/node_modules
+    command: npm run dev
+    ports: ["5000:5000"]
+
+  # keep db, redis normal (no volume needed)
+  db:
+    image: postgres:16
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+  redis:
+    image: redis:7
+
+volumes:
+  pgdata:
