@@ -31,9 +31,17 @@ app.get('/health', (req, res) => {
 const wss = new WebSocketServer({ server }); 
 
 
+const configuredOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URLS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 const ALLOWED_ORIGINS = [
+  'https://agentfinance-production.up.railway.app',
   'https://serene-magic-production-6d0c.up.railway.app',
+  'http://localhost:3000',
   'http://localhost:4000',
+  ...configuredOrigins,
 ];
 
 

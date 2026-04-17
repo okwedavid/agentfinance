@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { BarChart, Bar, Cell } from 'recharts';
+import { API_BASE } from '@/lib/api';
 
 interface AnalyticsData {
   summary: { totalTasks: number; agents: number; successRate: number };
@@ -16,7 +17,7 @@ export default function Analytics() {
   const [data, setData] = useState<AnalyticsData | null>(null);
 
   useEffect(() => {
-    fetch('http://localhost:4000/api/analytics/summary', { cache: 'no-store' })
+    fetch(`${API_BASE}/api/analytics/summary`, { cache: 'no-store' })
       .then(res => res.json())
       .then(setData);
   }, []);

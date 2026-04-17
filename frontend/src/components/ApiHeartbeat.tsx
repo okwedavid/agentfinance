@@ -25,21 +25,20 @@ export default function ApiHeartbeat() {
 
   useEffect(() => {
     let mounted = true;
+    const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
 
     const buildCandidates = () => {
       const c: string[] = [];
       if (typeof window !== 'undefined') {
         const proto = window.location.protocol;
-        if (process.env.NEXT_PUBLIC_API_URL)
-          c.push(process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, ''));
+        if (configuredApiUrl) c.push(configuredApiUrl);
         // Common host fallbacks that are reachable from a browser on the host machine
         c.push(`${proto}//localhost:4000`);
         c.push(`${proto}//127.0.0.1:4000`);
         // If user opened the UI via a LAN IP, try that host as well
         c.push(`${proto}//${window.location.hostname}:4000`);
       } else {
-        if (process.env.NEXT_PUBLIC_API_URL)
-          c.push(process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, ''));
+        if (configuredApiUrl) c.push(configuredApiUrl);
         c.push('http://backend:4000');
       }
       // Deduplicate while preserving order
@@ -48,7 +47,7 @@ export default function ApiHeartbeat() {
 
     const check = async () => {
       // Try same-origin proxy first
-  if (await probeUrl(`${process.env.NEXT_PUBLIC_API_URL}/health`, 2000)) {
+      if (await probeUrl('/api/health', 2000)) {
         if (mounted) setOk(true);
         return;
       }
