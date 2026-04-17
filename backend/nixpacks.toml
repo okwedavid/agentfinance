@@ -1,0 +1,9 @@
+[variables]
+NIXPACKS_PKGS = "openssl_3_x"
+
+[phases.build]
+# We are already inside the /backend folder, so the path is local
+cmds = ["npm ci", "npx prisma generate --schema=./prisma/schema.prisma"]
+
+[start]
+cmd = "node src/index.js"

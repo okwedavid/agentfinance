@@ -1,0 +1,13 @@
+{
+  "name": "agentfinance-ws",
+  "version": "1.0.0",
+  "main": "src/ws.js",
+  "scripts": {
+    "start": "node src/ws.js"
+  },
+  "dependencies": {
+    "ioredis": "^5.3.2",
+    "ws": "^8.13.0",
+    "jsonwebtoken": "^9.0.0"
+  }
+}
