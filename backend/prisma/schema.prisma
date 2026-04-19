@@ -7,6 +7,7 @@ model TaskAnalytics {
   result       Json?
   createdAt    DateTime @default(now())
 }
+
 generator client {
   provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
@@ -27,66 +28,66 @@ model Agent {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  username     String   @unique
-  passwordHash String
-  createdAt    DateTime @default(now())
+  id            String   @id @default(cuid())
+  username      String   @unique
+  passwordHash  String
+  walletAddress String?
+  createdAt     DateTime @default(now())
 }
 
 model Task {
-  id        String   @id @default(cuid())
-  agentId   String?
-  action    String
-  input     String?
-  // status values: pending, running, completed, failed
-  status    String   @default("pending")
-  startedAt DateTime?
+  id          String    @id @default(cuid())
+  agentId     String?
+  userId      String?
+  action      String
+  input       String?
+  status      String    @default("pending")
+  startedAt   DateTime?
   completedAt DateTime?
-  duration  Int? // milliseconds
-  result    String?
-  archived  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  duration    Int?
+  result      String?
+  archived    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  Agent     Agent?   @relation(fields: [agentId], references: [id])
-  messages  Message[]
+  Agent    Agent?    @relation(fields: [agentId], references: [id])
+  messages Message[]
 }
 
 model Message {
   id        String   @id @default(cuid())
   taskId    String?
-  sender    String   // "user" | "assistant" | "system"
+  sender    String
   content   String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   task      Task?    @relation(fields: [taskId], references: [id])
 }
 
-
 model CoordinatorTask {
-  id           String   @id @default(cuid())
-  rootTaskId   String?
-  agentId      String?
-  status       String   @default("pending")
-  plan         Json?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  subtasks     SubTask[]
+  id         String    @id @default(cuid())
+  rootTaskId String?
+  agentId    String?
+  status     String    @default("pending")
+  plan       Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  subtasks   SubTask[]
 }
 
 model SubTask {
-  id           String   @id @default(cuid())
+  id            String           @id @default(cuid())
   coordinatorId String?
-  taskId       String?
-  type         String
-  payload      Json?
-  status       String   @default("pending")
-  attempts     Int      @default(0)
-  maxAttempts  Int      @default(3)
-  lastError    String?
-  result       Json?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  taskId        String?
+  type          String
+  payload       Json?
+  status        String           @default("pending")
+  attempts      Int              @default(0)
+  maxAttempts   Int              @default(3)
+  lastError     String?
+  result        Json?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
   CoordinatorTask CoordinatorTask? @relation(fields: [coordinatorId], references: [id])
 }
 
@@ -98,12 +99,12 @@ model AuditLog {
 }
 
 model TokenUsage {
-  id              String   @id @default(cuid())
-  taskId          String?
-  model           String
-  promptTokens    Int
+  id               String   @id @default(cuid())
+  taskId           String?
+  model            String
+  promptTokens     Int
   completionTokens Int
-  totalTokens     Int
-  costCents       Int
-  createdAt       DateTime @default(now())
+  totalTokens      Int
+  costCents        Int
+  createdAt        DateTime @default(now())
 }
