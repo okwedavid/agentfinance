@@ -1,15 +1,13 @@
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone', // This is the crucial line for Railway
+  output: 'standalone',
   experimental: {},
-  // We keep this to help Next.js find the monorepo root if needed
-  outputFileTracingRoot: path.join(__dirname, '../../'), 
+  // Remove outputFileTracingRoot - it was causing the standalone server to be
+  // nested at .next/standalone/agentfinance/frontend/server.js instead of
+  // .next/standalone/server.js
+  //
+  // If you need monorepo file tracing, set this back and update server.js
+  // outputFileTracingRoot: path.join(__dirname, '../../'),
 };
 
 export default nextConfig;
