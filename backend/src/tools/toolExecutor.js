@@ -6,7 +6,6 @@
  * a string result that goes back to Claude as a tool_result.
  */
 
-import fetch from 'node-fetch';
 import logger from '../utils/logger.js';
 
 const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
