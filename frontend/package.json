@@ -2,9 +2,9 @@
   "name": "agentfinance-frontend",
   "private": true,
   "scripts": {
-  "dev": "next dev",
-  "build": "next build",
-  "start": "node server.js"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start -p ${PORT:-3000}"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
