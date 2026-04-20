@@ -19,9 +19,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             
             {/* 1. TOP LEVEL AGENT OUTPUT (Premium Sticky Banner) */}
             <AgentStatus />
-            <AgentOutput data={{}} />
+            <AgentOutput />
             {/* 2. NAVBAR (Updated with Link components for better Analytics routing) */}
-            <nav className="backdrop-blur bg-white/5 p-4 sticky top-12 z-40 border-b border-white/10">
+            <nav className="backdrop-blur bg-white/5 p-4 sticky top-9 z-40 border-b border-white/10">
               <div className="max-w-7xl mx-auto flex items-center justify-between">
                 <Link href="/" className="text-xl font-semibold hover:text-green-400 transition-colors">
                   AgentFinance
