@@ -15,6 +15,9 @@ export default function Header() {
 			<CreateTaskButton />
 			<WalletConnectButton />
 			<Link href="/dashboard" className={`px-3 py-2 rounded-lg font-semibold transition-colors ${pathname === '/dashboard' ? 'bg-emerald-600 text-white shadow' : 'bg-gray-800 text-gray-200 hover:bg-gray-700'}`}>Analytics Dashboard</Link>
+			<Link href="/analytics" className="hover:text-green-400">
+  				Analytics
+			</Link>
 		</header>
 	);
 }

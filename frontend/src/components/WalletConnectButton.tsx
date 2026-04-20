@@ -39,7 +39,7 @@ export default function WalletConnectButton() {
     try {
       const eth = (window as any).ethereum;
       if (!eth) {
-        window.open('https://metamask.io/download.html', '_blank');
+        window.open('https://metamask.io', '_blank');
         return;
       }
       const accounts = await eth.request({ method: 'eth_requestAccounts' });
