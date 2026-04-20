@@ -6,7 +6,7 @@ import logger from '../utils/logger.js';
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const MAX_ITERATIONS = 10; 
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = 'llama-3.1-70b-versatile'; // Often more stable for function calling than 3.3
 
 export async function runAgent({
   taskId,
@@ -48,6 +48,7 @@ export async function runAgent({
         ],
         tools,
         tool_choice: "auto",
+        disable_tool_validation: true,
       });
     } catch (err) {
       logger.error(`Groq API error: ${err.message}`);
