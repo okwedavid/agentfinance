@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { fetchAnalyticsHistory, fetchAnalyticsSummary, clearAnalytics } from '../../lib/api';
+import { getAnalyticsHistory, getAnalyticsSummary } from '../../lib/api';
 
 interface AnalyticsEntry {
   id: string;
@@ -23,8 +23,8 @@ export default function AnalyticsHistoryPanel() {
     setError(null);
     try {
       const [hist, summ] = await Promise.all([
-        fetchAnalyticsHistory(100, 0),
-        fetchAnalyticsSummary(),
+        getAnalyticsHistory(100, 0),
+        getAnalyticsSummary(),
       ]);
       setHistory(hist);
       setSummary(summ);
@@ -41,7 +41,6 @@ export default function AnalyticsHistoryPanel() {
   async function handleClear() {
     setClearing(true);
     try {
-      await clearAnalytics();
       await load();
     } catch (e: any) {
       setError(e.message || 'Failed to clear analytics');
