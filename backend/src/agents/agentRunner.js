@@ -6,7 +6,7 @@ import logger from '../utils/logger.js';
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const MAX_ITERATIONS = 10; 
-const MODEL = 'llama-3.1-70b-versatile'; // Often more stable for function calling than 3.3
+const MODEL = 'llama-3.3-70b-versatile';
 
 export async function runAgent({
   taskId,
