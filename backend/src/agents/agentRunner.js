@@ -11,17 +11,19 @@
  * WebSocket can show live updates.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+//import Anthropic from '@anthropic-ai/sdk';
+import Groq from "groq-sdk";
 import { toolsByAgentType } from '../tools/toolDefinitions.js';
 import { executeTool } from '../tools/toolExecutor.js';
 import logger from '../utils/logger.js';
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+//const anthropic = new Anthropic({
+//  apiKey: process.env.ANTHROPIC_API_KEY,
+//});
 
 const MAX_ITERATIONS = 10; // Safety cap — prevents infinite loops
-const MODEL = 'claude-sonnet-4-20250514';
+const MODEL = 'llama-3.3-70b-versatile';
 
 /**
  * Run an agent to completion.
@@ -67,17 +69,21 @@ export async function runAgent({
     // ── Call Anthropic ─────────────────────────────────────────────────────
     let response;
     try {
-      response = await anthropic.messages.create({
-        model: MODEL,
-        max_tokens: 4096,
-        system: systemPrompt,
-        tools,
-        messages,
-      });
-    } catch (err) {
-      logger.error(`Anthropic API error: ${err.message}`);
-      throw new Error(`AI call failed: ${err.message}`);
-    }
+  response = await groq.chat.completions.create({
+    model: MODEL,
+    max_tokens: 4096,
+    // Groq (OpenAI style) puts the system prompt inside the messages array
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...messages,
+    ],
+    tools,
+    tool_choice: "auto", // Tell Groq to use tools automatically
+  });
+} catch (err) {
+  logger.error(`Groq API error: ${err.message}`);
+  throw new Error(`AI call failed: ${err.message}`);
+}
 
     logger.info(`Agent ${agentType} response — stop_reason: ${response.stop_reason}, blocks: ${response.content.length}`);
 
