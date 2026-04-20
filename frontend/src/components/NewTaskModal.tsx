@@ -44,8 +44,8 @@ export function NewTaskModal() {
       </button>
 
       {open && (
-        <div className="relative inset-5 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="absolute inset-5 bg-black/70 backdrop-blur-sm" onClick={() => setOpen(false)} />
+        <div className="fixed top-0 right-0 left-0 bottom-0 inset-0 z-9999 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setOpen(false)} />
           <div className="relative w-full sm:max-w-lg bg-[#0f172a] border border-white/10 rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-white font-semibold">Deploy an Agent</h3>
