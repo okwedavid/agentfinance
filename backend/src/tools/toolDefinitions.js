@@ -1,175 +1,147 @@
 /**
- * toolDefinitions.js
+ * toolDefinitions.js — Groq/OpenAI tool format
  *
- * IMPORTANT: Tool names must:
- * - Use only letters, numbers, underscores (no hyphens, no spaces)
- * - Not clash with Anthropic built-in tool names (web_search, computer etc)
- * - Have clear, specific descriptions so Claude picks the right tool
+ * CRITICAL: Groq requires the OpenAI tool schema format:
+ * {
+ *   type: "function",
+ *   function: {
+ *     name: string,
+ *     description: string,
+ *     parameters: { type: "object", properties: {...}, required: [...] }
+ *   }
+ * }
  *
- * We prefix custom tools with nothing but keep names unambiguous.
+ * NOT the Anthropic format (no input_schema, no top-level name/description).
  */
 
-export const researchTools = [
-  {
-    name: 'search_web',
-    description: 'Search the internet for current information about crypto markets, prices, news, or financial topics. Use this to get real-time data.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Search query string, e.g. "bitcoin price today" or "best DeFi yields April 2026"' },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'fetch_crypto_price',
-    description: 'Get the current USD price, 24h % change, and market cap for a specific cryptocurrency by its CoinGecko ID.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        coin_id: {
-          type: 'string',
-          description: 'CoinGecko coin ID. Examples: bitcoin, ethereum, solana, chainlink, uniswap, aave, matic-network',
-        },
-      },
-      required: ['coin_id'],
-    },
-  },
-  {
-    name: 'fetch_market_overview',
-    description: 'Get a market-wide overview: trending coins, top volume coins, DeFi TVL rankings, or the Fear & Greed index.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        category: {
-          type: 'string',
-          enum: ['trending', 'top_volume', 'defi_tvl', 'fear_greed'],
-          description: 'Which market overview to fetch',
-        },
-      },
-      required: ['category'],
-    },
-  },
-  {
-    name: 'analyse_opportunity',
-    description: 'Structure and analyse a financial opportunity (arbitrage, yield, content sale, freelance). Returns a formatted analysis prompt for Claude to reason over.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        opportunity_type: {
-          type: 'string',
-          enum: ['arbitrage', 'yield_farming', 'content_sale', 'freelance'],
-        },
-        description: { type: 'string', description: 'Describe the opportunity in plain text' },
-        supporting_data: { type: 'object', description: 'Any numbers or data you have' },
-      },
-      required: ['opportunity_type', 'description'],
-    },
-  },
-];
+const tool = (name, description, properties, required = []) => ({
+  type: 'function',
+  function: { name, description, parameters: { type: 'object', properties, required } },
+});
 
-export const tradingTools = [
-  ...researchTools,
-  {
-    name: 'check_price_spread',
-    description: 'Compare the price of a token across two exchanges and estimate potential arbitrage profit after fees.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        token_symbol: { type: 'string', description: 'Token symbol, e.g. ETH, BTC, SOL, LINK' },
-        exchange_a: { type: 'string', description: 'First exchange name, e.g. binance, coinbase, kraken' },
-        exchange_b: { type: 'string', description: 'Second exchange name, e.g. uniswap, bybit, okx' },
-      },
-      required: ['token_symbol', 'exchange_a', 'exchange_b'],
-    },
-  },
-  {
-    name: 'fetch_defi_yields',
-    description: 'Fetch current APY and TVL for a DeFi protocol. Use this to find yield farming or liquidity provision opportunities.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        protocol_name: { type: 'string', description: 'Protocol name, e.g. aave, compound, uniswap, curve, lido' },
-        token_filter: { type: 'string', description: 'Optional: filter by token symbol, e.g. ETH, USDC' },
-      },
-      required: ['protocol_name'],
-    },
-  },
-];
+// ── Tool library ─────────────────────────────────────────────────────────────
 
-export const contentTools = [
-  ...researchTools,
-  {
-    name: 'draft_content',
-    description: 'Generate a full piece of monetisable content: crypto article, newsletter, Twitter/X thread, research report, or NFT description.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        content_type: {
-          type: 'string',
-          enum: ['article', 'twitter_thread', 'newsletter', 'research_report', 'nft_description'],
-        },
-        topic: { type: 'string', description: 'The topic or title' },
-        target_audience: { type: 'string', description: 'Who this is for, e.g. "crypto beginners", "DeFi investors"' },
-        approximate_length: { type: 'string', description: 'e.g. "800 words", "10 tweets", "500 words"' },
-      },
-      required: ['content_type', 'topic'],
-    },
-  },
-  {
-    name: 'find_monetisation_platform',
-    description: 'Find the best platform and pricing strategy to sell a piece of content or skill online for crypto or fiat.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        content_type: { type: 'string', description: 'Type of content: article, report, course, thread, etc.' },
-        topic: { type: 'string', description: 'What the content is about' },
-        target_monthly_income: { type: 'string', description: 'Target monthly income, e.g. "$500/month"' },
-      },
-      required: ['content_type', 'topic'],
-    },
-  },
-];
+const SEARCH_WEB = tool(
+  'search_web',
+  'Search the internet for real-time information about crypto prices, DeFi opportunities, market news, or any financial topic.',
+  { query: { type: 'string', description: 'Search query, e.g. "best DeFi yield April 2026" or "bitcoin price today"' } },
+  ['query']
+);
 
-export const executionTools = [
-  ...tradingTools,
+const FETCH_CRYPTO_PRICE = tool(
+  'fetch_crypto_price',
+  'Get the current USD price, 24h percentage change, and market cap for a cryptocurrency by CoinGecko ID.',
   {
-    name: 'prepare_wallet_transaction',
-    description: 'Prepare (DO NOT send) an ERC-20 transfer or token swap. Returns unsigned transaction data for the user to review and approve in their wallet.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        action: { type: 'string', enum: ['transfer', 'swap'], description: 'Type of transaction' },
-        token: { type: 'string', description: 'Token symbol or contract address, e.g. ETH, USDC' },
-        amount: { type: 'string', description: 'Amount as string, e.g. "0.1"' },
-        recipient_address: { type: 'string', description: '0x wallet address to send to' },
-        network: { type: 'string', enum: ['ethereum', 'polygon', 'base', 'arbitrum', 'optimism'], default: 'ethereum' },
-      },
-      required: ['action', 'token', 'amount', 'recipient_address'],
+    coin_id: {
+      type: 'string',
+      description: 'CoinGecko coin ID. Use lowercase: bitcoin, ethereum, solana, chainlink, uniswap, aave, matic-network, avalanche-2, polkadot, arbitrum',
     },
   },
+  ['coin_id']
+);
+
+const FETCH_MARKET_OVERVIEW = tool(
+  'fetch_market_overview',
+  'Get a crypto market overview: trending coins, top volume coins, DeFi TVL rankings, or Fear & Greed index.',
   {
-    name: 'check_wallet_balance',
-    description: 'Check the ETH and token balances for a given wallet address.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        wallet_address: { type: 'string', description: '0x Ethereum wallet address' },
-        tokens: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'List of token symbols to check, e.g. ["ETH", "USDC", "LINK"]',
-        },
-      },
-      required: ['wallet_address'],
+    category: {
+      type: 'string',
+      enum: ['trending', 'top_volume', 'defi_tvl', 'fear_greed'],
+      description: 'Type of market data to fetch',
     },
   },
-];
+  ['category']
+);
+
+const CHECK_PRICE_SPREAD = tool(
+  'check_price_spread',
+  'Compare token price across two exchanges and estimate arbitrage profit potential after fees.',
+  {
+    token_symbol: { type: 'string', description: 'Token symbol: ETH, BTC, SOL, LINK, MATIC, etc.' },
+    exchange_a: { type: 'string', description: 'First exchange: binance, coinbase, kraken, okx' },
+    exchange_b: { type: 'string', description: 'Second exchange: uniswap, bybit, kucoin, htx' },
+  },
+  ['token_symbol', 'exchange_a', 'exchange_b']
+);
+
+const FETCH_DEFI_YIELDS = tool(
+  'fetch_defi_yields',
+  'Fetch current APY rates and TVL for DeFi protocols. Use this to find yield farming or staking opportunities.',
+  {
+    protocol_name: { type: 'string', description: 'Protocol: aave, compound, uniswap, curve, lido, convex, yearn' },
+    token_filter: { type: 'string', description: 'Optional token filter: ETH, USDC, USDT, WBTC' },
+  },
+  ['protocol_name']
+);
+
+const ANALYSE_OPPORTUNITY = tool(
+  'analyse_opportunity',
+  'Structure and score a financial opportunity for monetisation potential. Returns analysis framework.',
+  {
+    opportunity_type: {
+      type: 'string',
+      enum: ['arbitrage', 'yield_farming', 'content_sale', 'freelance', 'staking', 'liquidity_provision'],
+    },
+    description: { type: 'string', description: 'Plain text description of the opportunity' },
+    estimated_return: { type: 'string', description: 'Estimated return, e.g. "8% APY" or "$200/month"' },
+  },
+  ['opportunity_type', 'description']
+);
+
+const DRAFT_CONTENT = tool(
+  'draft_content',
+  'Write a complete piece of monetisable crypto/finance content ready to publish.',
+  {
+    content_type: {
+      type: 'string',
+      enum: ['article', 'twitter_thread', 'newsletter', 'research_report', 'nft_description'],
+    },
+    topic: { type: 'string', description: 'Topic or title' },
+    target_audience: { type: 'string', description: 'Target readers, e.g. "DeFi investors", "crypto beginners"' },
+  },
+  ['content_type', 'topic']
+);
+
+const FIND_MONETISATION = tool(
+  'find_monetisation_platform',
+  'Find the best platform and pricing strategy to sell content or skills for crypto/fiat income.',
+  {
+    content_type: { type: 'string', description: 'article, report, course, twitter_thread, newsletter, nft' },
+    topic: { type: 'string', description: 'What the content covers' },
+    target_monthly_income: { type: 'string', description: 'Income goal, e.g. "$500/month"' },
+  },
+  ['content_type', 'topic']
+);
+
+const PREPARE_TRANSACTION = tool(
+  'prepare_wallet_transaction',
+  'Prepare (NEVER auto-send) an ERC-20 transfer or token swap. Returns unsigned tx for user approval.',
+  {
+    action: { type: 'string', enum: ['transfer', 'swap'] },
+    token: { type: 'string', description: 'Token symbol: ETH, USDC, LINK, etc.' },
+    amount: { type: 'string', description: 'Amount as string: "0.1", "100"' },
+    recipient_address: { type: 'string', description: '0x wallet address' },
+    network: { type: 'string', enum: ['ethereum', 'polygon', 'base', 'arbitrum', 'optimism'], default: 'ethereum' },
+  },
+  ['action', 'token', 'amount', 'recipient_address']
+);
+
+const CHECK_WALLET_BALANCE = tool(
+  'check_wallet_balance',
+  'Check ETH and ERC-20 token balances for a wallet address.',
+  {
+    wallet_address: { type: 'string', description: '0x Ethereum wallet address' },
+    tokens: { type: 'array', items: { type: 'string' }, description: 'Token symbols to check: ["ETH","USDC","LINK"]' },
+  },
+  ['wallet_address']
+);
+
+// ── Agent tool sets ───────────────────────────────────────────────────────────
 
 export const toolsByAgentType = {
-  research:    researchTools,
-  trading:     tradingTools,
-  content:     contentTools,
-  execution:   executionTools,
-  coordinator: researchTools,
+  research:    [SEARCH_WEB, FETCH_CRYPTO_PRICE, FETCH_MARKET_OVERVIEW, ANALYSE_OPPORTUNITY],
+  trading:     [SEARCH_WEB, FETCH_CRYPTO_PRICE, FETCH_MARKET_OVERVIEW, CHECK_PRICE_SPREAD, FETCH_DEFI_YIELDS, ANALYSE_OPPORTUNITY],
+  content:     [SEARCH_WEB, FETCH_CRYPTO_PRICE, FETCH_MARKET_OVERVIEW, DRAFT_CONTENT, FIND_MONETISATION],
+  execution:   [FETCH_CRYPTO_PRICE, FETCH_MARKET_OVERVIEW, CHECK_PRICE_SPREAD, FETCH_DEFI_YIELDS, CHECK_WALLET_BALANCE, PREPARE_TRANSACTION],
+  coordinator: [SEARCH_WEB, FETCH_CRYPTO_PRICE, FETCH_MARKET_OVERVIEW, ANALYSE_OPPORTUNITY],
 };

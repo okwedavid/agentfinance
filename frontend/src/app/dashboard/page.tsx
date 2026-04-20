@@ -5,40 +5,96 @@ import { NewTaskModal } from "@/components/NewTaskModal";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'https://serene-magic-production-6d0c.up.railway.app').replace(/\/$/, '');
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://serene-magic-production-6d0c.up.railway.app';
 
-type Task = { id: string; action: string; status: string; createdAt: string; result?: string; };
+type Task = { id: string; action: string; status: string; createdAt: string; result?: string };
 
-const STATUS: Record<string, { dot: string; badge: string; label: string }> = {
-  pending:   { dot: 'bg-yellow-400', badge: 'bg-yellow-500/15 text-yellow-400 border-yellow-600/30', label: 'Pending' },
-  running:   { dot: 'bg-blue-400 animate-pulse', badge: 'bg-blue-500/15 text-blue-400 border-blue-600/30', label: 'Running' },
-  completed: { dot: 'bg-emerald-400', badge: 'bg-emerald-500/15 text-emerald-400 border-emerald-600/30', label: 'Done' },
-  failed:    { dot: 'bg-red-400', badge: 'bg-red-500/15 text-red-400 border-red-600/30', label: 'Failed' },
+const STATUS = {
+  pending:   { dot: 'bg-yellow-400', pill: 'bg-yellow-500/10 text-yellow-400 border-yellow-700/30', label: 'Pending' },
+  running:   { dot: 'bg-blue-400 animate-pulse', pill: 'bg-blue-500/10 text-blue-400 border-blue-700/30', label: 'Running' },
+  completed: { dot: 'bg-emerald-400', pill: 'bg-emerald-500/10 text-emerald-400 border-emerald-700/30', label: 'Done' },
+  failed:    { dot: 'bg-red-400', pill: 'bg-red-500/10 text-red-400 border-red-700/30', label: 'Failed' },
+} as const;
+
+const EV: Record<string, {icon:string; color:string; label:(d:any)=>string}> = {
+  'task:created':    { icon:'📨', color:'text-blue-400',   label:()=>'Task queued' },
+  'task:classified': { icon:'🧠', color:'text-purple-400', label:d=>`${d?.agentLabel||'Agent'} assigned` },
+  'agent:started':   { icon:'🚀', color:'text-cyan-400',   label:d=>`${d?.agentType||''} agent started` },
+  'agent:tool_call': { icon:'🔧', color:'text-amber-400',  label:d=>`Calling ${d?.tool||'tool'}` },
+  'agent:tool_result':{ icon:'✅', color:'text-amber-300', label:d=>`${d?.tool||'Tool'} returned` },
+  'agent:completed': { icon:'🎯', color:'text-emerald-400',label:()=>'Agent completed' },
+  'task:completed':  { icon:'💰', color:'text-emerald-500',label:()=>'Task done!' },
+  'task:failed':     { icon:'❌', color:'text-red-400',    label:()=>'Task failed' },
+  'task:updated':    { icon:'🔄', color:'text-gray-400',   label:d=>`Status: ${d?.status||'updated'}` },
 };
 
-const EVENT_MAP: Record<string, { icon: string; color: string; label: (d: any) => string }> = {
-  'task:created':     { icon: '📨', color: 'text-blue-400',   label: () => 'Task queued' },
-  'task:classified':  { icon: '🧠', color: 'text-purple-400', label: d => `→ ${d?.agentLabel || 'Agent'} assigned` },
-  'agent:started':    { icon: '🚀', color: 'text-cyan-400',   label: d => `${d?.agentType || ''} agent started` },
-  'agent:tool_call':  { icon: '🔧', color: 'text-amber-400',  label: d => `Calling ${d?.tool || 'tool'}` },
-  'agent:tool_result':{ icon: '✅', color: 'text-amber-300',  label: d => `${d?.tool || 'Tool'} returned` },
-  'agent:completed':  { icon: '🎯', color: 'text-emerald-400',label: () => 'Agent completed' },
-  'task:completed':   { icon: '💰', color: 'text-emerald-500',label: () => 'Task done!' },
-  'task:failed':      { icon: '❌', color: 'text-red-400',    label: () => 'Task failed' },
-  'task:updated':     { icon: '🔄', color: 'text-gray-400',   label: d => `Status: ${d?.status || 'updated'}` },
-};
-
-function parseTaskOutput(raw?: string): string {
+function parseOutput(raw?: string): string {
   if (!raw) return '';
   try {
     const p = JSON.parse(raw);
+    if (p.error) return `❌ ${p.error}`;
     if (p.output) return p.output;
-    if (p.error) return `Error: ${p.error}`;
     return JSON.stringify(p, null, 2);
-  } catch {
-    return raw;
-  }
+  } catch { return raw; }
+}
+
+// Floating popup for task output
+function TaskPopup({ task, anchor, onClose }: { task: Task; anchor: DOMRect; onClose: () => void }) {
+  const output = parseOutput(task.result);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    setTimeout(() => document.addEventListener('mousedown', handler), 0);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  // Position: try right of anchor, fall back to below
+  const top = Math.min(anchor.top + window.scrollY, window.innerHeight - 400 + window.scrollY);
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-50 w-80 sm:w-96 bg-[#0d1829] border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
+      style={{ top: Math.max(8, top), left: Math.min(anchor.right + 8, window.innerWidth - 400) }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 bg-black/20">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS[task.status as keyof typeof STATUS]?.dot || 'bg-gray-400'}`} />
+          <p className="text-white text-xs font-medium truncate">{task.action}</p>
+        </div>
+        <button onClick={onClose} className="text-gray-500 hover:text-gray-300 ml-2 flex-shrink-0 text-lg leading-none">×</button>
+      </div>
+
+      {/* Body */}
+      <div className="p-4 max-h-80 overflow-y-auto">
+        {task.status === 'running' && (
+          <div className="flex items-center gap-3 text-blue-400">
+            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+            <p className="text-sm">Agent is working...</p>
+          </div>
+        )}
+        {task.status === 'pending' && (
+          <p className="text-yellow-400 text-sm">⏳ Waiting in queue...</p>
+        )}
+        {(task.status === 'completed' || task.status === 'failed') && output && (
+          <pre className="text-gray-300 text-xs whitespace-pre-wrap leading-relaxed font-sans break-words">{output}</pre>
+        )}
+        {(task.status === 'completed' || task.status === 'failed') && !output && (
+          <p className="text-gray-500 text-sm italic">No output recorded.</p>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="px-4 py-2 border-t border-white/5 flex items-center justify-between">
+        <span className="text-gray-600 text-xs">{new Date(task.createdAt).toLocaleString()}</span>
+        <Link href="/analytics" className="text-blue-400 text-xs hover:text-blue-300">View in Analytics →</Link>
+      </div>
+    </div>
+  );
 }
 
 export default function Dashboard() {
@@ -46,9 +102,8 @@ export default function Dashboard() {
   const [user, setUser] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [wsState, setWsState] = useState<'connecting'|'live'|'offline'>('connecting');
-  const [selected, setSelected] = useState<Task | null>(null);
+  const [popup, setPopup] = useState<{ task: Task; anchor: DOMRect } | null>(null);
   const [loading, setLoading] = useState(true);
-  const feedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isLoggedIn()) { window.location.href = '/login'; return; }
@@ -61,18 +116,27 @@ export default function Dashboard() {
       const data = await getTasks();
       if (Array.isArray(data)) {
         setTasks(data);
-        // Update selected task if open
-        setSelected(prev => prev ? (data.find((t: Task) => t.id === prev.id) || prev) : null);
+        // Update popup task if open
+        setPopup(prev => prev ? { ...prev, task: data.find((t:Task) => t.id === prev.task.id) || prev.task } : null);
       }
-    } catch (e) { console.error(e); }
+    } catch {}
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
   useEffect(() => {
-    window.addEventListener('task:created', loadTasks);
-    return () => window.removeEventListener('task:created', loadTasks);
+    const h = () => loadTasks();
+    window.addEventListener('task:created', h);
+    return () => window.removeEventListener('task:created', h);
   }, [loadTasks]);
+
+  // Poll when tasks are running
+  useEffect(() => {
+    const hasRunning = tasks.some(t => t.status === 'running' || t.status === 'pending');
+    if (!hasRunning) return;
+    const t = setInterval(loadTasks, 5000);
+    return () => clearInterval(t);
+  }, [tasks, loadTasks]);
 
   // WebSocket
   useEffect(() => {
@@ -88,19 +152,14 @@ export default function Dashboard() {
         ws.onmessage = e => {
           try {
             const msg = JSON.parse(e.data);
-            const meta = EVENT_MAP[msg.type];
+            const meta = EV[msg.type];
             if (meta) {
               setEvents(prev => [{
-                key: `${msg.type}-${Date.now()}-${Math.random()}`,
-                icon: meta.icon,
-                color: meta.color,
-                label: meta.label(msg.data),
-                ts: Date.now(),
+                key: `${msg.type}-${Date.now()}`,
+                icon: meta.icon, color: meta.color, label: meta.label(msg.data), ts: Date.now(),
               }, ...prev].slice(0, 60));
             }
-            if (['task:created','task:completed','task:failed','task:updated'].includes(msg.type)) {
-              loadTasks();
-            }
+            if (['task:created','task:completed','task:failed','task:updated'].includes(msg.type)) loadTasks();
           } catch {}
         };
       } catch {}
@@ -109,10 +168,10 @@ export default function Dashboard() {
     return () => { dead = true; clearTimeout(timer); ws?.close(); };
   }, [loadTasks]);
 
-  // Scroll feed to top on new events
-  useEffect(() => {
-    feedRef.current?.scrollTo(0, 0);
-  }, [events.length]);
+  const openPopup = (task: Task, e: React.MouseEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setPopup(popup?.task.id === task.id ? null : { task, anchor: rect });
+  };
 
   const counts = {
     total: tasks.length,
@@ -123,142 +182,114 @@ export default function Dashboard() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-[#080d1a]">
+      <div className="min-h-screen bg-[#060b16] text-white">
 
-        {/* ── Top bar ─────────────────────────────────────────────────── */}
-        <header className="border-b border-white/5 bg-black/40 backdrop-blur sticky top-0 z-30">
-          <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
-            {/* Brand */}
-            <div className="flex-1 min-w-0">
-              <span className="text-white font-bold text-base">AgentFinance</span>
-              {user && <span className="text-blue-400 text-sm ml-2 hidden sm:inline">/ {user.username}</span>}
-            </div>
+        {/* Header */}
+        <header className="sticky top-0 z-30 bg-[#060b16]/95 backdrop-blur border-b border-white/5">
+          <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-2 sm:gap-3">
+            <span className="font-bold text-base flex-shrink-0">AgentFinance</span>
+            {user && <span className="text-blue-400 text-sm hidden sm:inline">/ {user.username}</span>}
 
-            {/* Nav */}
-            <nav className="hidden sm:flex items-center gap-1">
-              <Link href="/dashboard" className="text-xs px-3 py-1.5 rounded-lg bg-white/10 text-white">Dashboard</Link>
+            <nav className="hidden sm:flex items-center gap-1 ml-4">
+              <span className="text-xs px-3 py-1.5 rounded-lg bg-white/10 text-white">Dashboard</span>
               <Link href="/analytics" className="text-xs px-3 py-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors">Analytics</Link>
               <Link href="/wallet" className="text-xs px-3 py-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors">Wallet</Link>
             </nav>
 
-            {/* Status */}
-            <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border flex-shrink-0 ${
-              wsState === 'live' ? 'bg-emerald-900/30 border-emerald-800/40 text-emerald-400' :
-              wsState === 'connecting' ? 'bg-yellow-900/30 border-yellow-800/40 text-yellow-400' :
-              'bg-red-900/30 border-red-800/40 text-red-400'
+            <div className="flex-1" />
+
+            {/* WS indicator */}
+            <div className={`hidden sm:flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border flex-shrink-0 ${
+              wsState==='live' ? 'bg-emerald-900/30 border-emerald-800/40 text-emerald-400'
+              : wsState==='connecting' ? 'bg-yellow-900/30 border-yellow-800/40 text-yellow-400'
+              : 'bg-red-900/30 border-red-800/40 text-red-400'
             }`}>
-              <div className={`w-1.5 h-1.5 rounded-full ${wsState === 'live' ? 'bg-emerald-400 animate-pulse' : wsState === 'connecting' ? 'bg-yellow-400' : 'bg-red-400'}`} />
-              <span className="hidden sm:inline">{wsState === 'live' ? 'Live' : wsState === 'connecting' ? 'Connecting' : 'Offline'}</span>
+              <div className={`w-1.5 h-1.5 rounded-full ${wsState==='live'?'bg-emerald-400 animate-pulse':wsState==='connecting'?'bg-yellow-400':'bg-red-400'}`} />
+              {wsState==='live'?'Live':wsState==='connecting'?'…':'Offline'}
             </div>
 
-            {/* New task - flex-shrink-0 prevents overflow on mobile */}
-            <div className="flex-shrink-0">
-              <NewTaskModal />
-            </div>
+            {/* New task — flex-shrink-0 prevents mobile overflow */}
+            <div className="flex-shrink-0"><NewTaskModal /></div>
 
             <button
-              onClick={() => { logout(); window.location.href = '/login'; }}
-              className="text-xs text-gray-500 hover:text-gray-300 transition-colors flex-shrink-0 hidden sm:block"
-            >
-              Sign out
-            </button>
+              onClick={() => { logout(); window.location.href='/login'; }}
+              className="text-xs text-gray-500 hover:text-gray-300 flex-shrink-0 hidden sm:block"
+            >Sign out</button>
           </div>
         </header>
 
         <main className="max-w-7xl mx-auto px-4 py-5">
 
-          {/* ── Stats row ───────────────────────────────────────────────── */}
+          {/* Stats */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
             {[
-              { label: 'Total', value: counts.total, color: 'text-white' },
-              { label: 'Running', value: counts.running, color: 'text-blue-400' },
-              { label: 'Completed', value: counts.done, color: 'text-emerald-400' },
-              { label: 'Pending', value: counts.pending, color: 'text-yellow-400' },
+              { label:'Total tasks', val: counts.total, color:'text-white' },
+              { label:'Running', val: counts.running, color:'text-blue-400' },
+              { label:'Completed', val: counts.done, color:'text-emerald-400' },
+              { label:'Pending', val: counts.pending, color:'text-yellow-400' },
             ].map(s => (
-              <div key={s.label} className="bg-white/4 border border-white/8 rounded-xl px-4 py-3">
+              <div key={s.label} className="bg-white/3 border border-white/7 rounded-xl px-4 py-3">
                 <p className="text-gray-500 text-xs mb-1">{s.label}</p>
-                <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                <p className={`text-2xl font-bold ${s.color}`}>{s.val}</p>
               </div>
             ))}
           </div>
 
-          {/* ── Main grid ───────────────────────────────────────────────── */}
+          {/* Main grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
             {/* Tasks panel */}
-            <div className="bg-white/4 border border-white/8 rounded-2xl overflow-hidden flex flex-col">
+            <div className="bg-white/3 border border-white/7 rounded-2xl overflow-hidden">
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/6">
-                <h2 className="text-white font-semibold text-sm">Tasks</h2>
-                <button onClick={loadTasks} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">↻ Refresh</button>
+                <h2 className="text-sm font-semibold">Tasks</h2>
+                <button onClick={loadTasks} className="text-xs text-blue-400 hover:text-blue-300">↻ Refresh</button>
               </div>
 
-              <div className="flex-1 overflow-y-auto max-h-72 divide-y divide-white/5">
+              <div className="divide-y divide-white/5 max-h-[400px] overflow-y-auto">
                 {loading && <div className="p-6 text-center text-gray-500 text-sm">Loading...</div>}
                 {!loading && tasks.length === 0 && (
-                  <div className="p-8 text-center">
+                  <div className="p-10 text-center">
                     <div className="text-3xl mb-2">🤖</div>
                     <p className="text-gray-400 text-sm">No tasks yet</p>
-                    <p className="text-gray-600 text-xs mt-1">Use <strong className="text-gray-400">+ New Task</strong> to deploy an agent</p>
+                    <p className="text-gray-600 text-xs mt-1">Click <strong className="text-gray-300">+ New Task</strong> to deploy your first agent</p>
                   </div>
                 )}
                 {tasks.map(task => {
-                  const s = STATUS[task.status] || STATUS.pending;
-                  const isSelected = selected?.id === task.id;
+                  const s = STATUS[task.status as keyof typeof STATUS] || STATUS.pending;
+                  const isOpen = popup?.task.id === task.id;
                   return (
                     <button
                       key={task.id}
-                      onClick={() => setSelected(isSelected ? null : task)}
-                      className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5 ${isSelected ? 'bg-white/6' : ''}`}
+                      onClick={e => openPopup(task, e)}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5 ${isOpen ? 'bg-white/6' : ''}`}
                     >
                       <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.dot}`} />
                       <div className="flex-1 min-w-0">
                         <p className="text-white text-sm truncate">{task.action}</p>
                         <p className="text-gray-600 text-xs">{new Date(task.createdAt).toLocaleString()}</p>
                       </div>
-                      <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-md border ${s.badge}`}>{s.label}</span>
+                      <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-md border ${s.pill}`}>{s.label}</span>
+                      <span className="text-gray-600 text-xs flex-shrink-0">{task.result ? '↗' : '···'}</span>
                     </button>
                   );
                 })}
               </div>
-
-              {/* Result panel */}
-              {selected && (
-                <div className="border-t border-white/6 p-4 bg-black/20">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-medium text-blue-300 truncate flex-1 mr-2">{selected.action}</p>
-                    <button onClick={() => setSelected(null)} className="text-gray-600 hover:text-gray-400 text-xs flex-shrink-0">✕ close</button>
-                  </div>
-                  {selected.result ? (
-                    <div className="bg-black/40 rounded-xl p-3 max-h-56 overflow-y-auto">
-                      <pre className="text-gray-300 text-xs whitespace-pre-wrap leading-relaxed break-words font-sans">
-                        {parseTaskOutput(selected.result)}
-                      </pre>
-                    </div>
-                  ) : (
-                    <p className="text-gray-600 text-xs italic">
-                      {selected.status === 'running' ? 'Agent is working...' :
-                       selected.status === 'pending' ? 'Waiting in queue...' : 'No output recorded.'}
-                    </p>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Live feed */}
-            <div className="bg-white/4 border border-white/8 rounded-2xl overflow-hidden flex flex-col">
+            <div className="bg-white/3 border border-white/7 rounded-2xl overflow-hidden">
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/6">
-                <h2 className="text-white font-semibold text-sm">Live Agent Activity</h2>
+                <h2 className="text-sm font-semibold">Live Agent Activity</h2>
                 {events.length > 0 && (
-                  <button onClick={() => setEvents([])} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">Clear</button>
+                  <button onClick={() => setEvents([])} className="text-xs text-gray-500 hover:text-gray-300">Clear</button>
                 )}
               </div>
-
-              <div ref={feedRef} className="flex-1 overflow-y-auto max-h-72 divide-y divide-white/5">
+              <div className="divide-y divide-white/5 max-h-[400px] overflow-y-auto">
                 {events.length === 0 ? (
-                  <div className="p-8 text-center">
+                  <div className="p-10 text-center">
                     <div className="text-3xl mb-2">📡</div>
                     <p className="text-gray-400 text-sm">Waiting for activity</p>
-                    <p className="text-gray-600 text-xs mt-1">Events stream here when agents run</p>
+                    <p className="text-gray-600 text-xs mt-1">Events appear here when agents run</p>
                   </div>
                 ) : events.map(ev => (
                   <div key={ev.key} className="flex items-center gap-3 px-4 py-2.5">
@@ -272,14 +303,23 @@ export default function Dashboard() {
 
           </div>
 
-          {/* ── Mobile nav ───────────────────────────────────────────────── */}
-          <div className="sm:hidden mt-4 flex gap-2">
-            <Link href="/analytics" className="flex-1 text-center text-xs py-2.5 bg-white/5 border border-white/10 rounded-xl text-gray-300">Analytics</Link>
-            <Link href="/wallet" className="flex-1 text-center text-xs py-2.5 bg-white/5 border border-white/10 rounded-xl text-gray-300">Wallet</Link>
-            <button onClick={() => { logout(); window.location.href = '/login'; }} className="flex-1 text-xs py-2.5 bg-white/5 border border-white/10 rounded-xl text-gray-500">Sign out</button>
+          {/* Mobile bottom nav */}
+          <div className="sm:hidden mt-4 grid grid-cols-3 gap-2">
+            <Link href="/analytics" className="text-center text-xs py-2.5 bg-white/5 border border-white/8 rounded-xl text-gray-300">Analytics</Link>
+            <Link href="/wallet" className="text-center text-xs py-2.5 bg-white/5 border border-white/8 rounded-xl text-gray-300">Wallet</Link>
+            <button onClick={() => { logout(); window.location.href='/login'; }} className="text-xs py-2.5 bg-white/5 border border-white/8 rounded-xl text-gray-500">Sign out</button>
           </div>
 
         </main>
+
+        {/* Floating popup */}
+        {popup && (
+          <TaskPopup
+            task={popup.task}
+            anchor={popup.anchor}
+            onClose={() => setPopup(null)}
+          />
+        )}
       </div>
     </ErrorBoundary>
   );
