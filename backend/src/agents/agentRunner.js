@@ -1,42 +1,13 @@
-/**
- * Agent runner — the core agentic loop.
- *
- * Calls Anthropic claude-sonnet with tool-use enabled.
- * Handles the full multi-turn tool-use loop:
- *   1. Send prompt → Claude responds with text or tool_use
- *   2. If tool_use → execute the tool → send result back
- *   3. Repeat until Claude gives a final text response (stop_reason: 'end_turn')
- *
- * Streams progress events via Redis pub/sub so the frontend
- * WebSocket can show live updates.
- */
-
-//import Anthropic from '@anthropic-ai/sdk';
 import Groq from "groq-sdk";
 import { toolsByAgentType } from '../tools/toolDefinitions.js';
 import { executeTool } from '../tools/toolExecutor.js';
 import logger from '../utils/logger.js';
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-//const anthropic = new Anthropic({
-//  apiKey: process.env.ANTHROPIC_API_KEY,
-//});
 
-const MAX_ITERATIONS = 10; // Safety cap — prevents infinite loops
+const MAX_ITERATIONS = 10; 
 const MODEL = 'llama-3.3-70b-versatile';
 
-/**
- * Run an agent to completion.
- *
- * @param {object} params
- * @param {string} params.taskId       - Prisma Task ID
- * @param {string} params.agentType    - 'research' | 'trading' | 'content' | 'execution' | 'coordinator'
- * @param {string} params.systemPrompt - Agent's system prompt
- * @param {string} params.userPrompt   - The user's original request
- * @param {string} params.walletAddress- User's connected wallet (injected into context)
- * @param {function} params.onEvent    - Callback for streaming events to frontend
- * @returns {Promise<{result: string, toolsUsed: string[], iterations: number}>}
- */
 export async function runAgent({
   taskId,
   agentType,
@@ -49,12 +20,11 @@ export async function runAgent({
   const toolsUsed = [];
   let iterations = 0;
 
-  // Build the initial message — inject wallet context if available
   const contextualPrompt = walletAddress
     ? `${userPrompt}\n\n[Context: User's wallet address is ${walletAddress}. Any earnings should be directed here.]`
     : userPrompt;
 
-  // Conversation history — grows as tools are called
+  // History starts with the user prompt
   const messages = [
     { role: 'user', content: contextualPrompt },
   ];
@@ -66,35 +36,33 @@ export async function runAgent({
     iterations++;
     logger.info(`Agent ${agentType} — iteration ${iterations}`);
 
-    // ── Call Anthropic ─────────────────────────────────────────────────────
     let response;
     try {
-  response = await groq.chat.completions.create({
-    model: MODEL,
-    max_tokens: 4096,
-    // Groq (OpenAI style) puts the system prompt inside the messages array
-    messages: [
-      { role: "system", content: systemPrompt },
-      ...messages,
-    ],
-    tools,
-    tool_choice: "auto", // Tell Groq to use tools automatically
-  });
-} catch (err) {
-  logger.error(`Groq API error: ${err.message}`);
-  throw new Error(`AI call failed: ${err.message}`);
-}
+      response = await groq.chat.completions.create({
+        model: MODEL,
+        max_tokens: 4096,
+        // System prompt is inside the messages array for Groq
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...messages,
+        ],
+        tools,
+        tool_choice: "auto",
+      });
+    } catch (err) {
+      logger.error(`Groq API error: ${err.message}`);
+      throw new Error(`AI call failed: ${err.message}`);
+    }
 
-    logger.info(`Agent ${agentType} response — stop_reason: ${response.stop_reason}, blocks: ${response.content.length}`);
+    const assistantMessage = response.choices[0].message;
+    const toolCalls = assistantMessage.tool_calls;
 
-    // ── Add assistant response to history ──────────────────────────────────
-    messages.push({ role: 'assistant', content: response.content });
+    // Add Groq's assistant message to history
+    messages.push(assistantMessage);
 
-    // ── Handle stop reasons ────────────────────────────────────────────────
-    if (response.stop_reason === 'end_turn') {
-      // Final answer — extract text
-      const textBlock = response.content.find(b => b.type === 'text');
-      const finalResult = textBlock?.text || 'Agent completed with no text output.';
+    // ── CASE 1: Final Answer (No Tool Calls) ──────────────────────────────
+    if (!toolCalls || toolCalls.length === 0) {
+      const finalResult = assistantMessage.content || 'Agent completed with no text output.';
 
       onEvent?.({
         type: 'agent:completed',
@@ -106,17 +74,15 @@ export async function runAgent({
         timestamp: Date.now(),
       });
 
-      logger.info(`Agent ${agentType} completed after ${iterations} iterations, ${toolsUsed.length} tools used`);
+      logger.info(`Agent ${agentType} completed after ${iterations} iterations`);
       return { result: finalResult, toolsUsed, iterations };
     }
 
-    if (response.stop_reason === 'tool_use') {
-      // Extract all tool_use blocks from this response
-      const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-      const toolResults = [];
-
-      for (const toolUse of toolUseBlocks) {
-        const { id, name, input } = toolUse;
+    // ── CASE 2: Tool Use ──────────────────────────────────────────────────
+    if (toolCalls && toolCalls.length > 0) {
+      for (const toolCall of toolCalls) {
+        const { id, function: { name, arguments: argsString } } = toolCall;
+        const input = JSON.parse(argsString); // Groq sends arguments as a string
         toolsUsed.push(name);
 
         onEvent?.({
@@ -130,7 +96,6 @@ export async function runAgent({
 
         logger.info(`Agent ${agentType} calling tool: ${name}`);
 
-        // Execute the tool
         let toolResult;
         try {
           toolResult = await executeTool(name, input);
@@ -139,34 +104,34 @@ export async function runAgent({
           logger.error(`Tool ${name} threw: ${err.message}`);
         }
 
+        // Stringify tool result if it's an object (Groq expects strings/JSON)
+        const content = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
+
         onEvent?.({
           type: 'agent:tool_result',
           agentType,
           taskId,
           tool: name,
-          result: toolResult,
+          result: content,
           timestamp: Date.now(),
         });
 
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: id,
-          content: toolResult,
+        // Add the tool response back to the conversation
+        messages.push({
+          role: 'tool',
+          tool_call_id: id,
+          name: name,
+          content: content,
         });
       }
-
-      // Add all tool results back in a single user message
-      messages.push({ role: 'user', content: toolResults });
+      // Continue loop to let the AI process the tool results
       continue;
     }
 
-    // Unexpected stop reason
-    logger.warn(`Agent ${agentType} unexpected stop_reason: ${response.stop_reason}`);
     break;
   }
 
-  // Hit iteration cap
-  const timeoutResult = `Agent reached maximum iterations (${MAX_ITERATIONS}). Partial results may be available.`;
+  const timeoutResult = `Agent reached maximum iterations (${MAX_ITERATIONS}).`;
   onEvent?.({ type: 'agent:timeout', agentType, taskId, iterations, timestamp: Date.now() });
   return { result: timeoutResult, toolsUsed, iterations };
 }
