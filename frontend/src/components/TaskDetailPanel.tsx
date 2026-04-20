@@ -21,7 +21,7 @@ export default function TaskDetailPanel({ taskId }:{ taskId:string }){
       <pre className="bg-gray-800 p-2 rounded text-sm overflow-auto">{JSON.stringify(task.input, null, 2)}</pre>
       <div className="mt-3">
         <h4 className="text-sm text-gray-300">Result</h4>
-        <pre className="bg-gray-800 p-2 rounded text-sm overflow-auto">{JSON.stringify(task.result, null, 2)}</pre>
+        <pre className="bg-gray-800 p-2 rounded text-sm leading-normal text-gray-300 whitespace-pre-wrap">{JSON.stringify(task.result, null, 2)}</pre>
       </div>
       <div className="flex gap-2 mt-4">
         <button onClick={async ()=>{ await patch(task.id, { status: 'completed', completedAt: new Date().toISOString() }); await refresh(); }} className="px-3 py-1 bg-green-600 rounded">Mark Complete</button>
