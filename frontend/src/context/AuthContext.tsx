@@ -1,8 +1,8 @@
 "use client";
 import { createContext, useState, useEffect, useContext } from 'react';
-import { apiFetch } from '../lib/api';
+import { login as apiLogin, register as apiRegister, getMe, logout as apiLogout } from '../lib/api';
 
-type User = { id: string; username: string } | null;
+type User = { id: string; username: string; walletAddress?: string } | null;
 
 type AuthContextType = {
   user: User;
@@ -22,11 +22,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
     if (!token) { setLoading(false); return; }
-    apiFetch('/auth/me')
-      .then(json => setUser({ id: json.id, username: json.username }))
+
+    getMe()
+      .then(json => setUser({ id: json.id, username: json.username, walletAddress: json.walletAddress }))
       .catch(() => {
+        // Token expired or invalid
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         setUser(null);
@@ -35,36 +37,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const login = async (username: string, password: string) => {
-    try {
-      const j = await apiFetch('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ username, password }),
-      });
-      localStorage.setItem('token', j.token);
-      localStorage.setItem('user', JSON.stringify({ id: j.id, username: j.username }));
-      setUser({ id: j.id, username: j.username });
-    } catch (error) {
-      throw error;
-    }
+    const j = await apiLogin(username, password);
+    setUser({ id: j.id, username: j.username });
   };
 
   const register = async (username: string, password: string) => {
-    try {
-      const j = await apiFetch('/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({ username, password }),
-      });
-      localStorage.setItem('token', j.token);
-      localStorage.setItem('user', JSON.stringify({ id: j.id, username: j.username }));
-      setUser({ id: j.id, username: j.username });
-    } catch (error) {
-      throw error;
-    }
+    const j = await apiRegister(username, password);
+    setUser({ id: j.id, username: j.username });
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    apiLogout();
     setUser(null);
   };
 
