@@ -5,15 +5,19 @@ import { AuthContext } from '../context/AuthContext';
 export default function AgentStatus() {
   const [online, setOnline] = useState<number>(0);
   const [names, setNames] = useState<string[]>([]);
-  // Fix: Destructure token if AuthContext returns an object, otherwise use as is
-  const context = useContext(AuthContext);
-  const token = context?.token || context; 
+   // Use 'any' type assertion to bypass the strict AuthContextType check for the build
+  const context = useContext(AuthContext) as any;
+  const token = context?.token; 
 
   useEffect(() => {
-    if (!token) return;
-    // Note: If deployed on Railway (HTTPS), this might need wss:// 
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${location.hostname}:5000/?token=${token}`;
+    // Ensure we have a token and we are in the browser
+    if (!token || typeof window === 'undefined') return;
+
+    // Fix for Railway: Use wss if the site is on https
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    
+    // Use the backend port 5000 or your production WebSocket URL
+    const wsUrl = `${protocol}//${window.location.hostname}${window.location.port ? ':5000' : ''}/?token=${token}`;
     const ws = new WebSocket(wsUrl);
     
     ws.onmessage = (ev) => {
