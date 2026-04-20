@@ -7,6 +7,15 @@
  */
 
 import logger from '../utils/logger.js';
+import { Alchemy, Network, Utils } from 'alchemy-sdk';
+
+
+const alchemyConfig = {
+  apiKey: process.env.ALCHEMY_API_KEY,
+  network: Network.ETH_MAINNET, // You can change this to Network.BASE_MAINNET or others
+};
+const alchemy = new Alchemy(alchemyConfig);
+
 
 const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
 
@@ -234,16 +243,46 @@ async function prepare_transaction({ action, token, amount, to_address, chain = 
   });
 }
 
-async function get_wallet_balance({ address, tokens = ['ETH'] }) {
+async function get_wallet_balance({ address, tokens = [] }) {
   if (!address || !address.startsWith('0x')) {
     return 'Invalid wallet address. Must start with 0x.';
   }
-  // In production: call Alchemy/Infura eth_getBalance + ERC-20 balanceOf
-  return JSON.stringify({
-    address,
-    balances: tokens.map(t => ({ token: t, balance: '—', note: 'Add ALCHEMY_API_KEY to Railway env to enable live balance checks' })),
-    timestamp: new Date().toISOString(),
-  });
+
+  try {
+    // 1. Fetch Native ETH Balance
+    const balanceInWei = await alchemy.core.getBalance(address, 'latest');
+    const ethBalance = Utils.formatEther(balanceInWei);
+
+    // 2. Fetch ERC-20 Token Balances
+    // If no specific tokens are provided, Alchemy returns the top tokens by volume for that address
+    const tokenBalances = await alchemy.core.getTokenBalances(address);
+    
+    // 3. Format and supplement with Metadata (names, symbols)
+    const formattedTokens = await Promise.all(
+      tokenBalances.tokenBalances
+        .filter(t => !t.error)
+        .slice(0, 10) // Limit to top 10 for performance
+        .map(async (t) => {
+          const metadata = await alchemy.core.getTokenMetadata(t.contractAddress);
+          const balance = (parseInt(t.tokenBalance) / Math.pow(10, metadata.decimals)).toFixed(4);
+          return {
+            symbol: metadata.symbol,
+            name: metadata.name,
+            balance: balance,
+          };
+        })
+    );
+
+    return JSON.stringify({
+      address,
+      eth_balance: `${parseFloat(ethBalance).toFixed(4)} ETH`,
+      tokens: formattedTokens,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    logger.error(`Alchemy balance fetch failed: ${err.message}`);
+    return `Error fetching balance: ${err.message}. Ensure ALCHEMY_API_KEY is correct.`;
+  }
 }
 
 // ─── Dispatcher ───────────────────────────────────────────────────────────────
