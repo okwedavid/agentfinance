@@ -1,6 +1,6 @@
 import React from 'react';
 
-export const AgentOutput = ({ data }) => {
+export const AgentOutput = ({ data }: { data?: any }) => {
   if (!data) return null;
   return (
     <div className="fixed top-0 left-0 w-full z-[100] bg-black/80 backdrop-blur-xl border-b border-cyan-500/50 p-4 shadow-[0_0_20px_rgba(0,255,255,0.2)]">
