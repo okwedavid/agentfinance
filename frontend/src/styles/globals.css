@@ -11,8 +11,11 @@ html, body {
 @layer components {
   /* 2. Requirement: Container Styling */
   .agent-output-container {
-    @apply bg-[#0f172a] rounded-2xl p-4 max-h-80 overflow-y-auto;
-    
+background-color: #0f172a !important;
+  border-radius: 1rem !important;
+  padding: 1rem !important;
+  max-height: 20rem !important;
+  overflow-y: auto !important;    
     /* Thin Scrollbar Logic */
     scrollbar-width: thin;
     scrollbar-color: #334155 #0f172a;
@@ -33,9 +36,14 @@ html, body {
   /* 3. Requirement: Output Element (pre) */
   .agent-pre-styled {
     /* Typography */
-     @apply bg-[#1e293b] border border-white/10 rounded-xl p-5;
-    @apply text-gray-300 text-sm leading-relaxed whitespace-pre-wrap break-all;
-    font-family: var(--font-fira-code), monospace;
+       background-color: #1e293b !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 0.75rem !important;
+  padding: 1.25rem !important;
+  font-family: 'Fira Code', monospace !important;
+  font-size: 0.875rem !important;
+  color: #d1d5db !important;
+  white-space: pre-wrap !important;
   }
 
   /* 4. Requirement: Keyword Emphasis */
