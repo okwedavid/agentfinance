@@ -2,5 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body { height: 100%; }
-body { background-color: #111827; color: #ffffff; }
+/* 1. Global Setup */
+html, body { 
+  height: 100%; 
+  @apply bg-[#0f172a] text-white antialiased; /* Deep Slate Background */
+}
+
+@layer components {
+  /* 2. Requirement: Container Styling */
+  .agent-output-container {
+    background-color: #0f172a;
+    border-radius: 1rem;
+    padding: 1rem;
+    max-height: 20rem; /* max-h-80 */
+    overflow-y: auto;
+    
+    /* Thin Scrollbar Logic */
+    scrollbar-width: thin;
+    scrollbar-color: #334155 #0f172a;
+  }
+
+  /* Custom Scrollbars (Webkit) */
+  .agent-output-container::-webkit-scrollbar {
+    width: 6px;
+  }
+  .agent-output-container::-webkit-scrollbar-track {
+    background: #0f172a;
+  }
+  .agent-output-container::-webkit-scrollbar-thumb {
+    background-color: #334155;
+    border-radius: 20px;
+  }
+
+  /* 3. Requirement: Output Element (pre) */
+  .agent-pre-styled {
+    background-color: #1e293b;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    
+    /* Typography */
+    font-family: 'Fira Code', 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 0.875rem;
+    line-height: 1.7;
+    color: rgb(209, 213, 219);
+    white-space: pre-wrap;
+  }
+
+  /* 4. Requirement: Keyword Emphasis */
+  .agent-keyword {
+    color: #60a5fa;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    display: block;
+    margin-top: 0.75rem;
+  }
+}
