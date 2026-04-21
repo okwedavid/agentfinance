@@ -29,15 +29,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <AgentOutput />
 
             {/* 2. NAVBAR (Sticky under the Agent Bar) */}
-            <nav className="backdrop-blur bg-white/5 p-4 sticky top-12 z-40 border-b border-white/10">
+            <nav className="backdrop-blur bg-white/5 px-4 py-1 sticky top-[37px] z-40 border-b border-white/10">
               <div className="max-w-7xl mx-auto flex items-center justify-between">
-                <Link href="/" className="text-xl font-semibold hover:text-blue-400 transition-colors">
+                <Link href="/" className="text-lg font-semibold hover:text-blue-400 transition-colors">
                   AgentFinance
                 </Link>
                 <div className="flex items-center space-x-6">
-                  <Link href="/dashboard" className="text-sm hover:text-blue-400 transition-colors">Dashboard</Link>
-                  <Link href="/analytics" className="text-sm hover:text-blue-400 transition-colors">Analytics</Link>
-                  <Link href="/wallet" className="text-sm hover:text-blue-400 transition-colors">Wallet</Link>
+                  <Link className="text-xs hover:text-blue-400 transition-colors" href="/dashboard">Dashboard</Link>
+                  <Link className="text-xs hover:text-blue-400 transition-colors" href="/analytics">Analytics</Link>
+                  <Link className="text-xs hover:text-blue-400 transition-colors" href="/wallet">Wallet</Link>
                 </div>
               </div>
             </nav>
