@@ -34,7 +34,7 @@ function renderOutput(text: string) {
   if (!text) return null;
 
   const lines = text.split('\n');
-  const elements: JSX.Element[] = [];
+  const elements: React.JSX.Element[] = [];
   let key = 0;
 
   for (let i = 0; i < lines.length; i++) {
