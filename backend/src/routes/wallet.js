@@ -89,11 +89,11 @@ router.get('/tokens', async (req, res) => {
     });
     const data = await r.json();
     const tokens = (data.result?.tokenBalances || [])
-      .filter((t: any) => t.tokenBalance !== '0x0000000000000000000000000000000000000000000000000000000000000000')
+      .filter((t) => t.tokenBalance !== '0x0000000000000000000000000000000000000000000000000000000000000000')
       .slice(0, 20);
 
     return res.json({ address, tokens });
-  } catch (err: any) {
+  } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
