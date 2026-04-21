@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {/* 1. TOP LEVEL AGENT OUTPUT (Premium Sticky Banner) */}
             {/* We pass an empty object to data? to satisfy TypeScript requirements */}
             <AgentStatus />
-            <AgentOutput data={{ status: "System initialized" }} />
+            <AgentOutput />
 
             {/* 2. NAVBAR (Sticky under the Agent Bar) */}
             <nav className="backdrop-blur bg-white/5 p-4 sticky top-12 z-40 border-b border-white/10">
