@@ -7,8 +7,22 @@ import { useWebSocketContext } from "../../../context/WebSocketContext";
 import { motion } from "framer-motion";
 
 const CoordinatorControlRoom = () => {
-  const { events, agents, tasks, connectionStatus, forceSync, dispatchTestTask } = useWebSocketContext();
+  const context = useWebSocketContext();
+
+  // If context is null (during build), use fallback empty values
+  const { 
+    events = [], 
+    agents = [], 
+    tasks = [], 
+    connectionStatus = 'disconnected', 
+    forceSync = () => {}, 
+    dispatchTestTask = () => {} 
+  } = context || {};
+
   const [selectedAgent, setSelectedAgent] = useState(null);
+  
+  // Important: If context is null, you might want to return a loading state
+  if (!context) return <div>Loading...</div>;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 to-gray-900 p-8">
