@@ -106,13 +106,16 @@ export default function AgentActivityFeed({ events }: { events: any[] }) {
               )}
             </div>
 
-            {isExpanded && ev.result && (
-              <pre className="mt-2 text-gray-300 whitespace-pre-wrap break-words text-xs bg-black/30 p-2 rounded max-h-40 overflow-y-auto">
+          {isExpanded && ev.result && (
+            <div className="agent-output-container mt-2">
+              <span className="agent-keyword">Agent Result</span>
+              <pre className="agent-pre-styled">
                 {typeof ev.result === 'string'
                   ? ev.result.slice(0, 800)
                   : JSON.stringify(ev.result, null, 2).slice(0, 800)}
               </pre>
-            )}
+            </div>
+          )}
           </div>
         );
       })}
