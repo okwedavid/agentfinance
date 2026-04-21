@@ -1,51 +1,38 @@
+import type { Metadata, Viewport } from 'next';
 import '../styles/globals.css';
 import { AuthProvider } from '@/context/AuthContext';
-import ProtectedLayoutClient from '@/components/ProtectedLayoutClient';
-import Link from 'next/link';
-import AgentStatus from '@/components/AgentStatus';
-import { AgentOutput } from '@/components/AgentOutput';
-import { Fira_Code } from 'next/font/google'; // Import Fira Code
 
-// Initialize Fira Code
-const firaCode = Fira_Code({
-  subsets: ['latin'],
-  variable: '--font-fira-code',
-});
+export const metadata: Metadata = {
+  title: 'AgentFinance – AI Agents That Generate Income',
+  description: 'Deploy AI agents that research, trade, create content and generate real income for you — 24/7 on autopilot.',
+  keywords: 'AI agents, crypto, DeFi, yield farming, autonomous agents, income generation',
+  authors: [{ name: 'okwedavid' }],
+  openGraph: {
+    title: 'AgentFinance',
+    description: 'AI agents working 24/7 to generate income for you',
+    type: 'website',
+  },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  // This is the key fix for mobile shifting — prevents content wider than viewport
+  viewportFit: 'cover',
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${firaCode.variable}`}>
+    <html lang="en" className="dark">
       <head>
-        <title>AgentFinance – Real-time Multi-Agent Platform</title>
-        <meta name="description" content="156+ AI agents · Live dispatch · 75% success rate" />
+        {/* Prevent mobile zoom and horizontal scroll */}
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
       </head>
-      <body className="font-mono antialiased"> 
+      <body className="bg-[#060b16] text-white antialiased overflow-x-hidden">
+        {/* overflow-x-hidden on body prevents horizontal scroll/shift on mobile */}
         <AuthProvider>
-          <div className="min-h-screen bg-[#0f172a] text-white">
-            
-            {/* 1. TOP LEVEL AGENT OUTPUT (Premium Sticky Banner) */}
-            {/* We pass an empty object to data? to satisfy TypeScript requirements */}
-            <AgentStatus />
-            <AgentOutput />
-
-            {/* 2. NAVBAR (Sticky under the Agent Bar) */}
-            <nav className="backdrop-blur bg-white/5 px-4 py-1 sticky top-[37px] z-40 border-b border-white/10">
-              <div className="max-w-7xl mx-auto flex items-center justify-between">
-                <Link href="/" className="text-lg font-semibold hover:text-blue-400 transition-colors">
-                  AgentFinance
-                </Link>
-                <div className="flex items-center space-x-6">
-                  <Link className="text-xs hover:text-blue-400 transition-colors" href="/dashboard">Dashboard</Link>
-                  <Link className="text-xs hover:text-blue-400 transition-colors" href="/analytics">Analytics</Link>
-                  <Link className="text-xs hover:text-blue-400 transition-colors" href="/wallet">Wallet</Link>
-                </div>
-              </div>
-            </nav>
-
-            <main className="p-6 max-w-7xl mx-auto">
-              <ProtectedLayoutClient>{children}</ProtectedLayoutClient>
-            </main>
-          </div>
+          {children}
         </AuthProvider>
       </body>
     </html>

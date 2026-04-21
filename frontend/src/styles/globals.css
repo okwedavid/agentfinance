@@ -2,58 +2,102 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 1. Global Setup */
-html, body { 
-  height: 100%; 
-  @apply bg-[#0f172a] text-white antialiased; /* Deep Slate Background */
+/* ── Reset & base ─────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-@layer components {
-  /* 2. Requirement: Container Styling */
-  .agent-output-container {
-background-color: #0f172a !important;
-  border-radius: 1rem !important;
-  padding: 1rem !important;
-  max-height: 20rem !important;
-  overflow-y: auto !important;    
-    /* Thin Scrollbar Logic */
-    scrollbar-width: thin;
-    scrollbar-color: #334155 #0f172a;
-  }
-
-  /* Custom Scrollbars (Webkit) */
-  .agent-output-container::-webkit-scrollbar {
-    width: 6px;
-  }
-  .agent-output-container::-webkit-scrollbar-track {
-    background: #0f172a;
-  }
-  .agent-output-container::-webkit-scrollbar-thumb {
-    background-color: #334155;
-    border-radius: 20px;
-  }
-
-  /* 3. Requirement: Output Element (pre) */
-  .agent-pre-styled {
-    /* Typography */
-       background-color: #1e293b !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  border-radius: 0.75rem !important;
-  padding: 1.25rem !important;
-  font-family: 'Fira Code', monospace !important;
-  font-size: 0.875rem !important;
-  color: #d1d5db !important;
-  white-space: pre-wrap !important;
-  }
-
-  /* 4. Requirement: Keyword Emphasis */
-  .agent-keyword {
-    color: #60a5fa;
-    font-weight: 700;
-    text-transform: uppercase;
-    font-size: 0.75rem;
-    display: block;
-    margin-top: 0.75rem;
-  }
-  
+html {
+  height: 100%;
+  /* Critical: prevents content wider than viewport causing horizontal scroll/shift */
+  overflow-x: hidden;
+  scroll-behavior: smooth;
 }
+
+body {
+  min-height: 100%;
+  overflow-x: hidden;
+  background-color: #060b16;
+  color: #ffffff;
+  font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Prevent text size adjust on orientation change */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* ── Mobile horizontal overflow fix ─────────────────────────────────────── */
+/* Anything wider than the viewport gets clipped, never causes horizontal scroll */
+#__next,
+[data-nextjs-scroll-focus-boundary] {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* ── Custom scrollbar ────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ── Selection ───────────────────────────────────────────────────────────── */
+::selection { background: rgba(59, 130, 246, 0.4); color: #ffffff; }
+
+/* ── Focus ───────────────────────────────────────────────────────────────── */
+:focus-visible { outline: 2px solid rgba(59,130,246,0.6); outline-offset: 2px; border-radius: 4px; }
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+
+.animate-fade-in   { animation: fadeIn 0.3s ease both; }
+.animate-slide-up  { animation: slideUp 0.4s ease both; }
+.animate-pulse-slow { animation: pulse-slow 2s ease-in-out infinite; }
+
+/* ── Skeleton loader ─────────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+
+/* ── Glass card ──────────────────────────────────────────────────────────── */
+.glass {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ── Gradient text ───────────────────────────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, #60a5fa, #a78bfa, #34d399);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Safe area padding for notched phones ────────────────────────────────── */
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0); }
+.safe-top    { padding-top: env(safe-area-inset-top, 0); }

@@ -3,7 +3,7 @@
  * Starts Express + WebSocket server AND the BullMQ agent worker.
  * The worker runs in the same process — for high scale, split into a separate Railway service.
  */
-
+import walletRouter from './routes/wallet.js';
 import IORedis from 'ioredis';
 import http from 'http';
 import { WebSocketServer } from 'ws';
@@ -160,6 +160,7 @@ app.post('/auth/wallet', authMiddleware, async (req, res) => {
     res.status(500).json({ error: 'failed' });
   }
 });
+app.use('/wallet', walletRouter);
 
 // Create task — now includes userId for agent context
 app.post('/tasks', authMiddleware, async (req, res) => {
