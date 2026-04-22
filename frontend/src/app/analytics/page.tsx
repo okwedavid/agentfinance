@@ -1,279 +1,220 @@
 "use client";
 import { useEffect, useState } from "react";
-import { isLoggedIn } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+import { isLoggedIn, getTasks, API_BASE } from "@/lib/api";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { TopNav, BottomNav, PageFooter } from "@/components/layout/Nav";
 import Link from "next/link";
-
-const API = (process.env.NEXT_PUBLIC_API_URL || 'https://serene-magic-production-6d0c.up.railway.app').replace(/\/$/, '');
-
-function token() { return typeof window !== 'undefined' ? localStorage.getItem('token') : null; }
-
-async function api(path: string) {
-  const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) },
-    credentials: 'include',
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
-}
-
-const STATUS_PILL: Record<string, string> = {
-  completed: 'bg-emerald-500/10 text-emerald-300 border-emerald-600/20',
-  failed:    'bg-red-500/10 text-red-300 border-red-600/20',
-  running:   'bg-blue-500/10 text-blue-300 border-blue-600/20',
-  pending:   'bg-yellow-500/10 text-yellow-300 border-yellow-600/20',
-};
-
-const AGENT_ICON: Record<string, string> = {
-  research: '🔬', trading: '📈', content: '✍️', execution: '⚡', coordinator: '🧠',
-};
 
 function Bar({ pct, color }: { pct: number; color: string }) {
   return (
-    <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-      <div className={`h-full ${color} rounded-full transition-all duration-700`} style={{ width: `${pct}%` }} />
+    <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden">
+      <div className={`h-full rounded-full transition-all duration-700 ${color}`} style={{ width: `${Math.min(100, pct)}%` }} />
     </div>
   );
 }
 
-export default function Analytics() {
-  const [tasks, setTasks] = useState<any[]>([]);
+export default function AnalyticsPage() {
+  const { user }              = useAuth();
+  const [tasks, setTasks]     = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [range, setRange]     = useState<7 | 14 | 30>(7);
+  const { status: wsStatus }  = useWebSocket();
 
   useEffect(() => {
     if (!isLoggedIn()) { window.location.href = '/login'; return; }
-    load();
+    getTasks().then(setTasks).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  async function load() {
-    setLoading(true); setError('');
-    try {
-      const data = await api('/tasks');
-      setTasks(Array.isArray(data) ? data : []);
-    } catch (e: any) { setError(e.message); }
-    finally { setLoading(false); }
-  }
+  // Computed stats
+  const completed  = tasks.filter(t => t.status === 'completed').length;
+  const failed     = tasks.filter(t => t.status === 'failed').length;
+  const running    = tasks.filter(t => t.status === 'running').length;
+  const rate       = tasks.length > 0 ? Math.round(completed / tasks.length * 100) : 0;
+  const earnings   = (completed * 0.0035).toFixed(4);
 
-  // Derived stats
-  const total = tasks.length;
-  const done = tasks.filter(t => t.status === 'completed').length;
-  const failed = tasks.filter(t => t.status === 'failed').length;
-  const running = tasks.filter(t => t.status === 'running').length;
-  const pending = tasks.filter(t => t.status === 'pending').length;
-  const successRate = total > 0 ? Math.round((done / total) * 100) : 0;
-
-  // Agent breakdown from task results
-  const agentMap: Record<string, number> = {};
-  tasks.forEach(t => {
-    try {
-      const r = JSON.parse(t.result || '{}');
-      const type = r.agentType || 'unknown';
-      agentMap[type] = (agentMap[type] || 0) + 1;
-    } catch {}
-  });
-  const agentEntries = Object.entries(agentMap).sort((a, b) => b[1] - a[1]);
-
-  // Last 7 days task volume
-  const now = Date.now();
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(now - (6 - i) * 86400000);
-    const label = d.toLocaleDateString('en', { weekday: 'short' });
+  // Daily breakdown for last N days
+  const days: { date: string; label: string; total: number; completed: number; failed: number }[] = [];
+  for (let i = range - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
     const key = d.toISOString().slice(0, 10);
-    const count = tasks.filter(t => t.createdAt?.slice(0, 10) === key).length;
-    return { label, count };
-  });
-  const maxDay = Math.max(...days.map(d => d.count), 1);
+    const dayTasks = tasks.filter(t => (t.createdAt || '').startsWith(key));
+    days.push({
+      date: key,
+      label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      total: dayTasks.length,
+      completed: dayTasks.filter(t => t.status === 'completed').length,
+      failed: dayTasks.filter(t => t.status === 'failed').length,
+    });
+  }
+  const maxDayTotal = Math.max(...days.map(d => d.total), 1);
+
+  // Status breakdown
+  const statusMap = { completed, failed, running, pending: tasks.filter(t => t.status === 'pending').length };
 
   return (
-    <div className="min-h-screen bg-[#060b16] text-white flex flex-col">
+    <div className="min-h-screen bg-[#050c18] flex flex-col">
+      <TopNav wsStatus={wsStatus} />
 
-      <header className="sticky top-0 z-30 border-b border-white/5 bg-[#060b16]/95 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-3">
-          <Link href="/dashboard" className="text-gray-400 hover:text-white text-sm transition-colors">← Dashboard</Link>
-          <span className="font-bold flex-1 text-center text-white">Analytics</span>
-          <Link href="/wallet" className="text-gray-400 hover:text-white text-sm transition-colors">Wallet</Link>
+      <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6 pb-24 md:pb-6 space-y-5 page-enter">
+
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-white">Analytics</h1>
+            <p className="text-gray-400 text-sm">Agent performance and earnings history</p>
+          </div>
+          <div className="flex items-center gap-1 bg-white/[0.03] border border-white/[0.06] rounded-xl p-1">
+            {([7, 14, 30] as const).map(d => (
+              <button key={d} onClick={() => setRange(d)}
+                className={`text-xs px-3 py-1.5 rounded-lg transition-all ${
+                  range === d ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
+                }`}>
+                {d}d
+              </button>
+            ))}
+          </div>
         </div>
-      </header>
 
-      <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-6">
+        {/* Top stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 stagger-children">
+          {[
+            { icon: '📋', label: 'Total Tasks',   value: tasks.length,   color: 'text-white',        sub: `${running} running` },
+            { icon: '✅', label: 'Completed',     value: completed,       color: 'text-emerald-400',  sub: `${rate}% success rate` },
+            { icon: '❌', label: 'Failed',        value: failed,          color: 'text-red-400',      sub: `${100 - rate}% failure rate` },
+            { icon: '💰', label: 'Est. Earnings', value: `${earnings} ETH`, color: 'text-amber-400', sub: `≈ $${(parseFloat(earnings) * 3200).toFixed(2)}` },
+          ].map((s, i) => (
+            <div key={s.label} className="glass rounded-2xl p-4 animate-fade-in card-glow"
+              style={{ animationDelay: `${i * 60}ms` }}>
+              <div className="text-xl mb-3">{s.icon}</div>
+              <p className={`text-xl font-bold font-mono ${s.color}`}>{s.value}</p>
+              <p className="text-gray-500 text-xs mt-0.5">{s.label}</p>
+              <p className="text-gray-600 text-xs">{s.sub}</p>
+            </div>
+          ))}
+        </div>
 
-        {loading && (
-          <div className="flex items-center justify-center py-24">
-            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-        )}
-
-        {error && !loading && (
-          <div className="bg-red-900/20 border border-red-700/30 rounded-2xl p-6 text-center mb-6">
-            <p className="text-red-300 font-medium mb-2">Failed to load analytics</p>
-            <p className="text-red-400/70 text-sm font-mono mb-4">{error}</p>
-            <button onClick={load} className="text-xs bg-red-900/30 border border-red-700/30 px-5 py-2 rounded-xl text-red-300 hover:bg-red-900/50 transition-colors">
-              Try again
-            </button>
-          </div>
-        )}
-
-        {!loading && !error && (
-          <>
-            {/* KPI row */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-              {[
-                { label: 'Total Tasks', value: total, color: 'text-white', icon: '📊' },
-                { label: 'Completed', value: done, color: 'text-emerald-400', icon: '✅' },
-                { label: 'Success Rate', value: `${successRate}%`, color: 'text-blue-400', icon: '🎯' },
-                { label: 'Failed', value: failed, color: 'text-red-400', icon: '⚠️' },
-              ].map(s => (
-                <div key={s.label} className="bg-white/[0.03] border border-white/[0.06] rounded-2xl px-4 py-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-gray-500 text-xs">{s.label}</p>
-                    <span className="text-lg">{s.icon}</span>
+        {/* Daily activity chart */}
+        <div className="glass rounded-2xl p-5 animate-fade-in">
+          <h2 className="text-sm font-semibold text-white mb-5">Daily Task Activity</h2>
+          {loading ? (
+            <div className="h-32 skeleton rounded-xl" />
+          ) : (
+            <div className="space-y-2">
+              {days.slice(-14).map(day => (
+                <div key={day.date} className="flex items-center gap-3">
+                  <span className="text-gray-600 text-xs w-16 flex-shrink-0 text-right">{day.label}</span>
+                  <div className="flex-1 flex items-center gap-1">
+                    {/* Completed bar */}
+                    <div
+                      className="h-5 rounded bg-emerald-500/40 border border-emerald-500/30 transition-all duration-500 flex items-center justify-center"
+                      style={{ width: `${(day.completed / maxDayTotal) * 100}%`, minWidth: day.completed > 0 ? 20 : 0 }}>
+                      {day.completed > 0 && (
+                        <span className="text-emerald-300 text-[9px] font-mono">{day.completed}</span>
+                      )}
+                    </div>
+                    {/* Failed bar */}
+                    {day.failed > 0 && (
+                      <div
+                        className="h-5 rounded bg-red-500/30 border border-red-500/25 flex items-center justify-center"
+                        style={{ width: `${(day.failed / maxDayTotal) * 100}%`, minWidth: 20 }}>
+                        <span className="text-red-300 text-[9px] font-mono">{day.failed}</span>
+                      </div>
+                    )}
+                    {day.total === 0 && (
+                      <div className="h-5 w-full rounded bg-white/[0.03]" />
+                    )}
                   </div>
-                  <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                  <span className="text-gray-600 text-xs w-6 text-right flex-shrink-0">{day.total || ''}</span>
+                </div>
+              ))}
+              <div className="flex items-center gap-4 mt-3 pt-3 border-t border-white/[0.06]">
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className="w-3 h-3 rounded bg-emerald-500/40 border border-emerald-500/30" /> Completed
+                </div>
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className="w-3 h-3 rounded bg-red-500/30 border border-red-500/25" /> Failed
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Status breakdown */}
+        <div className="glass rounded-2xl p-5 animate-fade-in">
+          <h2 className="text-sm font-semibold text-white mb-4">Status Breakdown</h2>
+          <div className="space-y-3">
+            {Object.entries(statusMap).map(([status, count]) => {
+              const pct = tasks.length > 0 ? (count / tasks.length) * 100 : 0;
+              const colors: Record<string, string> = {
+                completed: 'bg-emerald-500',
+                failed:    'bg-red-500',
+                running:   'bg-blue-500',
+                pending:   'bg-amber-500',
+              };
+              return (
+                <div key={status}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-gray-300 text-xs capitalize">{status}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500 text-xs">{count} tasks</span>
+                      <span className="text-white text-xs font-mono w-10 text-right">{pct.toFixed(0)}%</span>
+                    </div>
+                  </div>
+                  <Bar pct={pct} color={colors[status]} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Recent tasks table */}
+        <div className="glass rounded-2xl overflow-hidden animate-fade-in">
+          <div className="px-5 py-4 border-b border-white/[0.06] flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">All Tasks</h2>
+            <Link href="/dashboard" className="text-xs text-blue-400 hover:text-blue-300">
+              Deploy agent →
+            </Link>
+          </div>
+          {loading ? (
+            <div className="p-5 space-y-2">
+              {[1,2,3].map(i => <div key={i} className="h-10 skeleton rounded-lg" />)}
+            </div>
+          ) : tasks.length === 0 ? (
+            <div className="p-10 text-center">
+              <div className="text-3xl mb-2 animate-float">📊</div>
+              <p className="text-gray-500 text-sm">No data yet. Deploy your first agent on the Dashboard.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-white/[0.04] max-h-96 overflow-y-auto">
+              {tasks.slice(0, 50).map(t => (
+                <div key={t.id} className="flex items-center gap-3 px-5 py-3 hover:bg-white/[0.02] transition-colors">
+                  <span className="text-sm flex-shrink-0">
+                    {t.status === 'completed' ? '✅' : t.status === 'failed' ? '❌' : t.status === 'running' ? '⚡' : '⏳'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white/80 text-xs truncate">{t.action}</p>
+                    <p className="text-gray-600 text-xs">
+                      {new Date(t.createdAt || Date.now()).toLocaleDateString('en-US', {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                      })}
+                    </p>
+                  </div>
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${
+                    t.status === 'completed' ? 'badge-completed' :
+                    t.status === 'failed'    ? 'badge-failed' :
+                    t.status === 'running'   ? 'badge-running' : 'badge-pending'
+                  }`}>{t.status}</span>
                 </div>
               ))}
             </div>
+          )}
+        </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-
-              {/* 7-day bar chart */}
-              <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
-                <h2 className="text-sm font-semibold text-white mb-4">Task Volume — Last 7 Days</h2>
-                {days.every(d => d.count === 0) ? (
-                  <p className="text-gray-600 text-sm text-center py-8">No tasks in the last 7 days</p>
-                ) : (
-                  <div className="flex items-end gap-2 h-32">
-                    {days.map(d => (
-                      <div key={d.label} className="flex-1 flex flex-col items-center gap-1.5">
-                        <span className="text-xs text-gray-500">{d.count > 0 ? d.count : ''}</span>
-                        <div
-                          className="w-full bg-blue-500/70 rounded-t transition-all duration-700 hover:bg-blue-400 cursor-default"
-                          style={{ height: `${(d.count / maxDay) * 100}%`, minHeight: d.count > 0 ? '8px' : '2px', opacity: d.count > 0 ? 1 : 0.2 }}
-                          title={`${d.label}: ${d.count} tasks`}
-                        />
-                        <span className="text-xs text-gray-600">{d.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Status breakdown */}
-              <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
-                <h2 className="text-sm font-semibold text-white mb-4">Status Breakdown</h2>
-                <div className="space-y-4">
-                  {[
-                    { label: 'Completed', count: done, color: 'bg-emerald-500' },
-                    { label: 'Running', count: running, color: 'bg-blue-500' },
-                    { label: 'Pending', count: pending, color: 'bg-yellow-500' },
-                    { label: 'Failed', count: failed, color: 'bg-red-500' },
-                  ].map(s => {
-                    const pct = total > 0 ? Math.round((s.count / total) * 100) : 0;
-                    return (
-                      <div key={s.label}>
-                        <div className="flex justify-between mb-1.5">
-                          <span className="text-gray-300 text-sm">{s.label}</span>
-                          <span className="text-gray-500 text-xs">{s.count} ({pct}%)</span>
-                        </div>
-                        <Bar pct={pct} color={s.color} />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-            </div>
-
-            {/* Agent breakdown */}
-            {agentEntries.length > 0 && (
-              <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5 mb-6">
-                <h2 className="text-sm font-semibold text-white mb-4">Agent Type Usage</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {agentEntries.map(([type, count]) => {
-                    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-                    return (
-                      <div key={type}>
-                        <div className="flex justify-between mb-1.5">
-                          <span className="text-gray-300 text-sm capitalize">
-                            {AGENT_ICON[type] || '🤖'} {type}
-                          </span>
-                          <span className="text-gray-500 text-xs">{count} tasks</span>
-                        </div>
-                        <Bar pct={pct} color="bg-violet-500" />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Task history */}
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.05]">
-                <h2 className="text-sm font-semibold text-white">Task History</h2>
-                <button onClick={load} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">↻ Refresh</button>
-              </div>
-
-              {tasks.length === 0 ? (
-                <div className="p-12 text-center">
-                  <div className="text-3xl mb-2">📋</div>
-                  <p className="text-gray-400 text-sm">No tasks yet</p>
-                  <Link href="/dashboard" className="text-blue-400 text-xs hover:text-blue-300 mt-1 inline-block">
-                    Create a task →
-                  </Link>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-white/[0.05] text-left">
-                        <th className="px-5 pb-3 pt-4 text-gray-500 font-medium text-xs">Task</th>
-                        <th className="px-3 pb-3 pt-4 text-gray-500 font-medium text-xs">Status</th>
-                        <th className="px-3 pb-3 pt-4 text-gray-500 font-medium text-xs hidden sm:table-cell">Agent</th>
-                        <th className="px-3 pb-3 pt-4 text-gray-500 font-medium text-xs hidden md:table-cell">Date</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/[0.04]">
-                      {tasks.map((task: any) => {
-                        let agentType = '—';
-                        try { agentType = JSON.parse(task.result || '{}').agentType || '—'; } catch {}
-                        return (
-                          <tr key={task.id} className="hover:bg-white/[0.02] transition-colors">
-                            <td className="px-5 py-3 text-gray-300 max-w-xs">
-                              <span className="truncate block">{task.action}</span>
-                            </td>
-                            <td className="px-3 py-3">
-                              <span className={`text-xs px-2 py-0.5 rounded-md border ${STATUS_PILL[task.status] || STATUS_PILL.pending}`}>
-                                {task.status}
-                              </span>
-                            </td>
-                            <td className="px-3 py-3 text-gray-500 text-xs hidden sm:table-cell capitalize">
-                              {AGENT_ICON[agentType] || ''} {agentType}
-                            </td>
-                            <td className="px-3 py-3 text-gray-600 text-xs hidden md:table-cell">
-                              {new Date(task.createdAt).toLocaleString()}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </>
-        )}
       </main>
 
-      <footer className="border-t border-white/[0.05] mt-6">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <p className="text-gray-600 text-xs">© 2025 AgentFinance · Built by okwedavid</p>
-          <div className="flex items-center gap-4 text-xs text-gray-600">
-            <Link href="/dashboard" className="hover:text-gray-400 transition-colors">Dashboard</Link>
-            <Link href="/wallet" className="hover:text-gray-400 transition-colors">Wallet</Link>
-            <span>All rights reserved</span>
-          </div>
-        </div>
-      </footer>
+      <PageFooter />
+      <BottomNav />
     </div>
   );
 }

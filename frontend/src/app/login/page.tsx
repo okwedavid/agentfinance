@@ -1,112 +1,117 @@
 "use client";
 import { useState } from "react";
-import { login, register } from "@/lib/api";
+import { login, register, isLoggedIn } from "@/lib/api";
+import { useEffect } from "react";
+import Link from "next/link";
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [mode, setMode]       = useState<'login' | 'register'>('login');
+  const [username, setUser]   = useState('');
+  const [password, setPass]   = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]     = useState('');
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  useEffect(() => {
+    if (isLoggedIn()) window.location.href = '/dashboard';
+  }, []);
+
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!username || !password) { setError('Both fields are required'); return; }
-    setLoading(true);
-    setError('');
+    if (!username.trim() || !password.trim()) { setError('Enter username and password'); return; }
+    setLoading(true); setError('');
     try {
-      if (mode === 'login') {
-        await login(username, password);
-      } else {
-        await register(username, password);
-      }
-      // Token is saved inside login/register — redirect to dashboard
+      if (mode === 'login') await login(username, password);
+      else await register(username, password);
       window.location.href = '/dashboard';
-    } catch (err: any) {
-      setError(err.message || 'Something went wrong. Check backend is running.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    } catch (e: any) {
+      setError(e.message || 'Something went wrong');
+    } finally { setLoading(false); }
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        {/* Logo */}
+    <div className="min-h-screen bg-[#050c18] flex items-center justify-center p-4">
+      {/* Ambient glow */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-violet-600/8 rounded-full blur-3xl" />
+      </div>
+
+      <div className="relative w-full max-w-sm animate-scale-in">
+        {/* Brand */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white">AgentFinance</h1>
-          <p className="text-blue-300 text-sm mt-2">AI agents that generate income for you</p>
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-2xl font-black mx-auto mb-4 animate-glow">
+            A
+          </div>
+          <h1 className="text-2xl font-bold gradient-text">AgentFinance</h1>
+          <p className="text-gray-400 text-sm mt-1">AI agents that generate income for you</p>
         </div>
 
-        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
+        {/* Card */}
+        <div className="glass-heavy rounded-2xl p-6">
           {/* Mode toggle */}
-          <div className="flex rounded-xl bg-white/5 p-1 mb-6">
-            {(['login', 'register'] as const).map(m => (
-              <button
-                key={m}
-                onClick={() => { setMode(m); setError(''); }}
-                className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                  mode === m
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                {m === 'login' ? 'Sign In' : 'Create Account'}
-              </button>
-            ))}
+          <div className="flex gap-1 bg-white/[0.04] rounded-xl p-1 mb-6">
+            <button onClick={() => { setMode('login'); setError(''); }}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${
+                mode === 'login' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}>Sign In</button>
+            <button onClick={() => { setMode('register'); setError(''); }}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${
+                mode === 'register' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}>Create Account</button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={submit} className="space-y-4">
             <div>
-              <label className="block text-sm text-blue-200 mb-1">Username</label>
+              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Username</label>
               <input
-                type="text"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="Enter username"
-                autoFocus
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-blue-500 transition-colors"
-              />
+                type="text" value={username} onChange={e => setUser(e.target.value)}
+                placeholder="Enter username" autoComplete="username"
+                className="input-field" autoFocus />
             </div>
-
             <div>
-              <label className="block text-sm text-blue-200 mb-1">Password</label>
+              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Password</label>
               <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Enter password"
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-blue-500 transition-colors"
-              />
+                type="password" value={password} onChange={e => setPass(e.target.value)}
+                placeholder="Enter password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                className="input-field" />
             </div>
 
             {error && (
-              <div className="bg-red-900/30 border border-red-700/50 rounded-xl px-4 py-3 text-red-300 text-sm">
-                {error}
+              <div className="px-3 py-2.5 bg-red-500/10 border border-red-500/25 rounded-xl text-red-400 text-xs animate-fade-in leading-relaxed">
+                ❌ {error}
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl py-3 text-white font-semibold text-sm transition-all"
-            >
+            <button type="submit" disabled={loading} className="btn-primary w-full justify-center h-11 text-base">
               {loading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  {mode === 'login' ? 'Signing in...' : 'Creating account...'}
-                </span>
+                <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  {mode === 'login' ? 'Signing in…' : 'Creating account…'}
+                </>
               ) : mode === 'login' ? 'Sign In' : 'Create Account'}
             </button>
           </form>
 
-          {mode === 'register' && (
-            <p className="text-center text-xs text-gray-500 mt-4">
-              Your credentials are stored securely in our database with bcrypt hashing.
-              No email required.
-            </p>
-          )}
+          {/* Features preview */}
+          <div className="mt-6 pt-5 border-t border-white/[0.06]">
+            <p className="text-gray-600 text-xs text-center mb-3">What you get</p>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { icon: '🤖', text: '4 AI agents' },
+                { icon: '📈', text: 'DeFi yields' },
+                { icon: '💰', text: 'Auto earnings' },
+                { icon: '📊', text: 'Analytics' },
+              ].map(f => (
+                <div key={f.text} className="flex items-center gap-2 text-xs text-gray-500">
+                  <span>{f.icon}</span> {f.text}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
+
+        <p className="text-center text-gray-700 text-xs mt-4">
+          © {new Date().getFullYear()} AgentFinance · Built by okwedavid
+        </p>
       </div>
     </div>
   );

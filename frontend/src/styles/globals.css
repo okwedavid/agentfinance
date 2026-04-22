@@ -2,102 +2,236 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Reset & base ─────────────────────────────────────────────────────────── */
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+/* ─── Fonts ─────────────────────────────────────────────────────────────── */
+:root {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  /* Design tokens */
+  --bg-base:    #050c18;
+  --bg-surface: #0a1628;
+  --bg-card:    rgba(255,255,255,0.03);
+  --border:     rgba(255,255,255,0.07);
+  --accent:     #3b82f6;
+  --accent-dim: rgba(59,130,246,0.15);
 }
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html {
   height: 100%;
-  /* Critical: prevents content wider than viewport causing horizontal scroll/shift */
-  overflow-x: hidden;
+  overflow-x: hidden;          /* MOBILE FIX: no horizontal scroll */
   scroll-behavior: smooth;
+  font-family: var(--font-sans);
 }
 
 body {
   min-height: 100%;
-  overflow-x: hidden;
-  background-color: #060b16;
-  color: #ffffff;
-  font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif);
+  overflow-x: hidden;          /* MOBILE FIX: belt + suspenders */
+  background: var(--bg-base);
+  color: #fff;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Prevent text size adjust on orientation change */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
-/* ── Mobile horizontal overflow fix ─────────────────────────────────────── */
-/* Anything wider than the viewport gets clipped, never causes horizontal scroll */
-#__next,
-[data-nextjs-scroll-focus-boundary] {
+/* Next.js root containers */
+#__next, [data-nextjs-scroll-focus-boundary] {
   overflow-x: hidden;
-  max-width: 100vw;
+  max-width: 100vw;            /* MOBILE FIX: content clips at viewport edge */
 }
 
-/* ── Custom scrollbar ────────────────────────────────────────────────────── */
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
 
-/* ── Selection ───────────────────────────────────────────────────────────── */
-::selection { background: rgba(59, 130, 246, 0.4); color: #ffffff; }
+/* ─── Selection ──────────────────────────────────────────────────────────── */
+::selection { background: rgba(59,130,246,0.35); }
 
-/* ── Focus ───────────────────────────────────────────────────────────────── */
-:focus-visible { outline: 2px solid rgba(59,130,246,0.6); outline-offset: 2px; border-radius: 4px; }
-
-/* ── Animations ──────────────────────────────────────────────────────────── */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-@keyframes pulse-slow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-@keyframes spin-slow {
-  to { transform: rotate(360deg); }
-}
-
-.animate-fade-in   { animation: fadeIn 0.3s ease both; }
-.animate-slide-up  { animation: slideUp 0.4s ease both; }
-.animate-pulse-slow { animation: pulse-slow 2s ease-in-out infinite; }
-
-/* ── Skeleton loader ─────────────────────────────────────────────────────── */
-.skeleton {
-  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+/* ─── Focus ──────────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid rgba(59,130,246,0.5);
+  outline-offset: 2px;
   border-radius: 6px;
 }
 
-/* ── Glass card ──────────────────────────────────────────────────────────── */
-.glass {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+@keyframes fadeIn   { from { opacity:0; transform:translateY(6px) }  to { opacity:1; transform:translateY(0) } }
+@keyframes slideUp  { from { opacity:0; transform:translateY(20px) } to { opacity:1; transform:translateY(0) } }
+@keyframes slideIn  { from { opacity:0; transform:translateX(-12px) } to { opacity:1; transform:translateX(0) } }
+@keyframes scaleIn  { from { opacity:0; transform:scale(0.94) }       to { opacity:1; transform:scale(1) } }
+@keyframes shimmer  { 0% { background-position:-200% 0 } 100% { background-position:200% 0 } }
+@keyframes pulse-dot { 0%,100% { opacity:1; transform:scale(1) } 50% { opacity:0.5; transform:scale(0.85) } }
+@keyframes spin     { to { transform:rotate(360deg) } }
+@keyframes float    { 0%,100% { transform:translateY(0) } 50% { transform:translateY(-6px) } }
+@keyframes glow     { 0%,100% { box-shadow:0 0 20px rgba(59,130,246,0.1) } 50% { box-shadow:0 0 40px rgba(59,130,246,0.25) } }
+@keyframes countUp  { from { opacity:0; transform:translateY(10px) scale(0.9) } to { opacity:1; transform:none } }
+@keyframes borderFlow {
+  0%   { background-position: 0% 50% }
+  50%  { background-position: 100% 50% }
+  100% { background-position: 0% 50% }
+}
+@keyframes slideDown { from { opacity:0; transform:translateY(-8px) } to { opacity:1; transform:translateY(0) } }
+@keyframes ripple    { 0% { transform:scale(0); opacity:0.6 } 100% { transform:scale(2.5); opacity:0 } }
+
+.animate-fade-in    { animation: fadeIn 0.35s ease both; }
+.animate-slide-up   { animation: slideUp 0.4s ease both; }
+.animate-slide-in   { animation: slideIn 0.3s ease both; }
+.animate-scale-in   { animation: scaleIn 0.25s ease both; }
+.animate-float      { animation: float 4s ease-in-out infinite; }
+.animate-glow       { animation: glow 3s ease-in-out infinite; }
+.animate-count-up   { animation: countUp 0.5s ease both; }
+.animate-slide-down { animation: slideDown 0.25s ease both; }
+
+/* Stagger children */
+.stagger-children > *:nth-child(1)  { animation-delay: 0ms }
+.stagger-children > *:nth-child(2)  { animation-delay: 60ms }
+.stagger-children > *:nth-child(3)  { animation-delay: 120ms }
+.stagger-children > *:nth-child(4)  { animation-delay: 180ms }
+.stagger-children > *:nth-child(5)  { animation-delay: 240ms }
+.stagger-children > *:nth-child(6)  { animation-delay: 300ms }
+.stagger-children > *:nth-child(7)  { animation-delay: 360ms }
+.stagger-children > *:nth-child(8)  { animation-delay: 420ms }
+
+/* ─── Skeleton ───────────────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.04) 25%,
+    rgba(255,255,255,0.09) 50%,
+    rgba(255,255,255,0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s infinite;
+  border-radius: 8px;
 }
 
-/* ── Gradient text ───────────────────────────────────────────────────────── */
+/* ─── Glass ──────────────────────────────────────────────────────────────── */
+.glass {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.glass-heavy {
+  background: rgba(10,22,40,0.85);
+  border: 1px solid rgba(255,255,255,0.09);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+/* ─── Gradient text ──────────────────────────────────────────────────────── */
 .gradient-text {
-  background: linear-gradient(135deg, #60a5fa, #a78bfa, #34d399);
+  background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 50%, #34d399 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* ── Safe area padding for notched phones ────────────────────────────────── */
-.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0); }
+.gradient-text-gold {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ─── Animated border card ───────────────────────────────────────────────── */
+.card-glow {
+  position: relative;
+}
+.card-glow::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6, #06b6d4, #3b82f6);
+  background-size: 300% 300%;
+  animation: borderFlow 6s ease infinite;
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.card-glow:hover::before { opacity: 0.6; }
+
+/* ─── Button styles ──────────────────────────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.625rem 1.25rem;
+  border-radius: 12px;
+  border: 1px solid rgba(59,130,246,0.4);
+  transition: all 0.15s ease;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.btn-primary:hover  { background: linear-gradient(135deg, #60a5fa, #3b82f6); transform: translateY(-1px); box-shadow: 0 4px 20px rgba(59,130,246,0.35); }
+.btn-primary:active { transform: translateY(0) scale(0.98); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: rgba(255,255,255,0.5);
+  font-size: 0.875rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  cursor: pointer;
+  background: transparent;
+  white-space: nowrap;
+}
+.btn-ghost:hover { color: white; background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.08); }
+
+/* ─── Status badge ───────────────────────────────────────────────────────── */
+.badge-completed { background:rgba(16,185,129,0.12); color:#34d399; border:1px solid rgba(16,185,129,0.2); }
+.badge-running   { background:rgba(59,130,246,0.12);  color:#60a5fa; border:1px solid rgba(59,130,246,0.2); }
+.badge-pending   { background:rgba(245,158,11,0.12);  color:#fbbf24; border:1px solid rgba(245,158,11,0.2); }
+.badge-failed    { background:rgba(239,68,68,0.12);   color:#f87171; border:1px solid rgba(239,68,68,0.2); }
+
+/* ─── Safe area ──────────────────────────────────────────────────────────── */
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 12px); }
 .safe-top    { padding-top: env(safe-area-inset-top, 0); }
+
+/* ─── Page transitions ───────────────────────────────────────────────────── */
+.page-enter { animation: fadeIn 0.3s ease both; }
+
+/* ─── Number highlight ───────────────────────────────────────────────────── */
+.font-mono { font-family: var(--font-mono); }
+
+/* ─── Custom input ───────────────────────────────────────────────────────── */
+.input-field {
+  width: 100%;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  color: white;
+  font-size: 0.875rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+.input-field::placeholder { color: rgba(255,255,255,0.25); }
+.input-field:focus {
+  border-color: rgba(59,130,246,0.5);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+
+/* ─── Profit pulse ───────────────────────────────────────────────────────── */
+@keyframes profitPulse {
+  0%   { background-color: rgba(16,185,129,0.0) }
+  30%  { background-color: rgba(16,185,129,0.12) }
+  100% { background-color: rgba(16,185,129,0.0) }
+}
+.profit-flash { animation: profitPulse 1.5s ease; }

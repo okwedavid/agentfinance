@@ -1,62 +1,63 @@
 "use client";
-import { createContext, useState, useEffect, useContext } from 'react';
-import { login as apiLogin, register as apiRegister, getMe, logout as apiLogout } from '../lib/api';
+import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { getMe, isLoggedIn, logout as apiLogout } from "@/lib/api";
 
-type User = { id: string; username: string; walletAddress?: string } | null;
+interface User {
+  id: string;
+  username: string;
+  displayName?: string;
+  email?: string;
+  bio?: string;
+  walletAddress?: string;
+  isAdmin?: boolean;
+}
 
-type AuthContextType = {
-  user: User;
+interface AuthCtx {
+  user: User | null;
   loading: boolean;
-  login: (u: string, p: string) => Promise<void>;
-  register: (u: string, p: string) => Promise<void>;
+  refresh: () => Promise<void>;
   logout: () => void;
-};
+  isAdmin: boolean;
+}
 
-export const AuthContext = createContext<AuthContextType>({
+const Ctx = createContext<AuthCtx>({
   user: null, loading: true,
-  login: async () => {}, register: async () => {}, logout: () => {},
+  refresh: async () => {}, logout: () => {},
+  isAdmin: false,
 });
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<User>(null);
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-    if (!token) { setLoading(false); return; }
-
-    getMe()
-      .then(json => setUser({ id: json.id, username: json.username, walletAddress: json.walletAddress }))
-      .catch(() => {
-        // Token expired or invalid
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setUser(null);
-      })
-      .finally(() => setLoading(false));
+  const refresh = useCallback(async () => {
+    if (!isLoggedIn()) { setUser(null); setLoading(false); return; }
+    try {
+      const u = await getMe();
+      setUser(u);
+    } catch {
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const login = async (username: string, password: string) => {
-    const j = await apiLogin(username, password);
-    setUser({ id: j.id, username: j.username });
-  };
+  useEffect(() => { refresh(); }, [refresh]);
 
-  const register = async (username: string, password: string) => {
-    const j = await apiRegister(username, password);
-    setUser({ id: j.id, username: j.username });
-  };
-
-  const logout = () => {
+  function logout() {
     apiLogout();
     setUser(null);
-  };
+    window.location.href = '/login';
+  }
+
+  // Admin = username is "okwedavid" or has admin flag
+  const isAdmin = user?.isAdmin === true || user?.username === 'okwedavid';
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <Ctx.Provider value={{ user, loading, refresh, logout, isAdmin }}>
       {children}
-    </AuthContext.Provider>
+    </Ctx.Provider>
   );
-};
+}
 
-export const useAuth = () => useContext(AuthContext);
-export default AuthProvider;
+export const useAuth = () => useContext(Ctx);

@@ -1,277 +1,304 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { getMe, apiFetch, isLoggedIn } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+import { isLoggedIn, getTasks, API_BASE, getToken } from "@/lib/api";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import { TopNav, BottomNav, PageFooter } from "@/components/layout/Nav";
 import Link from "next/link";
 
-const API = (process.env.NEXT_PUBLIC_API_URL || 'https://serene-magic-production-6d0c.up.railway.app').replace(/\/$/, '');
-function tok() { return typeof window !== 'undefined' ? localStorage.getItem('token') : null; }
-
 const CHAINS = [
-  { id: 'ethereum', name: 'Ethereum', symbol: 'ETH', color: '#627EEA', icon: '⟠', explorer: 'https://etherscan.io/address/', chainId: 1 },
-  { id: 'polygon',  name: 'Polygon',  symbol: 'MATIC', color: '#8247E5', icon: '⬡', explorer: 'https://polygonscan.com/address/', chainId: 137 },
-  { id: 'base',     name: 'Base',     symbol: 'ETH', color: '#0052FF', icon: '🔵', explorer: 'https://basescan.org/address/', chainId: 8453 },
-  { id: 'arbitrum', name: 'Arbitrum', symbol: 'ETH', color: '#28A0F0', icon: '◎', explorer: 'https://arbiscan.io/address/', chainId: 42161 },
-  { id: 'solana',   name: 'Solana',   symbol: 'SOL', color: '#9945FF', icon: '◎', explorer: 'https://solscan.io/account/', chainId: null },
-  { id: 'bitcoin',  name: 'Bitcoin',  symbol: 'BTC', color: '#F7931A', icon: '₿', explorer: 'https://blockstream.info/address/', chainId: null },
+  { id:'ethereum', name:'Ethereum',  symbol:'ETH',  icon:'⟠', explorer:'https://etherscan.io/address/',    color:'text-blue-400'   },
+  { id:'polygon',  name:'Polygon',   symbol:'MATIC', icon:'⬡', explorer:'https://polygonscan.com/address/',color:'text-purple-400' },
+  { id:'base',     name:'Base',      symbol:'ETH',  icon:'🔵', explorer:'https://basescan.org/address/',   color:'text-blue-300'   },
+  { id:'arbitrum', name:'Arbitrum',  symbol:'ETH',  icon:'◎',  explorer:'https://arbiscan.io/address/',    color:'text-sky-400'    },
+  { id:'solana',   name:'Solana',    symbol:'SOL',  icon:'◎',  explorer:'https://solscan.io/account/',     color:'text-violet-400' },
+  { id:'bitcoin',  name:'Bitcoin',   symbol:'BTC',  icon:'₿',  explorer:'https://blockstream.info/address/',color:'text-amber-400' },
 ];
 
-async function getEthBalance(address: string): Promise<{ eth: string; usd: string } | null> {
-  try {
-    // Call our backend /wallet/balance endpoint (backend has Alchemy key securely)
-    const res = await fetch(`${API}/wallet/balance?address=${address}`, {
-      headers: { ...(tok() ? { Authorization: `Bearer ${tok()}` } : {}) },
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch { return null; }
-}
+type Msg = { text: string; type: 'ok' | 'err' | 'info' };
 
 export default function WalletPage() {
-  const [user, setUser] = useState<any>(null);
-  const [wallet, setWallet] = useState<string | null>(null);
-  const [manualAddr, setManualAddr] = useState('');
-  const [chain, setChain] = useState(CHAINS[0]);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState('');
+  const { user }              = useAuth();
+  const [wallet, setWallet]   = useState<string | null>(null);
+  const [input, setInput]     = useState('');
+  const [chain, setChain]     = useState(CHAINS[0]);
+  const [saving, setSaving]   = useState(false);
+  const [msg, setMsg]         = useState<Msg | null>(null);
   const [balance, setBalance] = useState<{ eth: string; usd: string } | null>(null);
-  const [balanceLoading, setBalanceLoading] = useState(false);
-  const [earnings, setEarnings] = useState({ pending: 0, total: 0, tasks: 0 });
-  const [ethPrice, setEthPrice] = useState(3200);
+  const [balLoad, setBalLoad] = useState(false);
+  const [tasks, setTasks]     = useState<any[]>([]);
+  const [sweeping, setSweep]  = useState(false);
+  const { status: wsStatus }  = useWebSocket();
 
-  // Load user
+  function flash(text: string, type: Msg['type'] = 'ok') {
+    setMsg({ text, type });
+    setTimeout(() => setMsg(null), 6000);
+  }
+
+  const loadBalance = useCallback(async (addr: string) => {
+    setBalLoad(true);
+    try {
+      const r = await fetch(`${API_BASE}/wallet/balance?address=${encodeURIComponent(addr)}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (r.ok) { const d = await r.json(); setBalance(d); }
+      else { setBalance(null); }
+    } catch { setBalance(null); }
+    finally { setBalLoad(false); }
+  }, []);
+
   useEffect(() => {
     if (!isLoggedIn()) { window.location.href = '/login'; return; }
-    getMe().then(u => {
-      setUser(u);
-      const addr = u.walletAddress || localStorage.getItem('agentfi_wallet');
-      if (addr) { setWallet(addr); setManualAddr(addr); }
-    });
-  }, []);
+    const saved = localStorage.getItem('agentfi_wallet');
+    if (saved) { setWallet(saved); setInput(saved); loadBalance(saved); }
+    getTasks().then(setTasks).catch(() => {});
+  }, [loadBalance]);
 
-  // Fetch ETH price
-  useEffect(() => {
-    fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd')
-      .then(r => r.json())
-      .then(d => setEthPrice(d?.ethereum?.usd || 3200))
-      .catch(() => {});
-  }, []);
-
-  // Fetch balance when wallet changes
-  const fetchBalance = useCallback(async (addr: string) => {
-    setBalanceLoading(true);
-    const b = await getEthBalance(addr);
-    setBalance(b);
-    setBalanceLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (wallet) fetchBalance(wallet);
-  }, [wallet, fetchBalance]);
-
-  // Calculate earnings from tasks
-  useEffect(() => {
-    if (!tok()) return;
-    fetch(`${API}/tasks`, {
-      headers: { Authorization: `Bearer ${tok()}` },
-      credentials: 'include',
-    })
-      .then(r => r.json())
-      .then(tasks => {
-        if (!Array.isArray(tasks)) return;
-        const completed = tasks.filter((t: any) => t.status === 'completed').length;
-        setEarnings({
-          tasks: completed,
-          pending: completed * 0.001,
-          total: completed * 0.0035,
-        });
-      })
-      .catch(() => {});
-  }, [wallet]);
-
-  async function saveWallet(addr: string) {
-    if (!addr.trim()) { setMsg('❌ Enter a wallet address'); return; }
-    if (!addr.startsWith('0x') || addr.length !== 42) {
-      setMsg('❌ Invalid address — must be 42 characters starting with 0x'); return;
+  async function save(addr: string) {
+    const trimmed = addr.trim();
+    if (!trimmed) { flash('Enter a wallet address', 'err'); return; }
+    if (!trimmed.startsWith('0x') || trimmed.length !== 42) {
+      flash('Invalid address — must be 42 characters starting with 0x', 'err'); return;
     }
-    setSaving(true); setMsg('');
+    setSaving(true);
     try {
-      await apiFetch('/auth/wallet', { method: 'POST', body: JSON.stringify({ walletAddress: addr }) });
-      setWallet(addr);
-      localStorage.setItem('agentfi_wallet', addr);
-      setMsg('✅ Wallet saved! Agents will route earnings here.');
-      setTimeout(() => setMsg(''), 5000);
-      fetchBalance(addr);
+      // Save to backend (best effort)
+      await fetch(`${API_BASE}/auth/wallet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ walletAddress: trimmed }),
+      }).catch(() => {});
+      // Always save locally
+      localStorage.setItem('agentfi_wallet', trimmed);
+      setWallet(trimmed);
+      flash('✅ Wallet connected! Agents will route earnings here.', 'ok');
+      loadBalance(trimmed);
     } catch (e: any) {
-      setMsg(`❌ ${e.message}`);
+      flash(e.message || 'Failed to save', 'err');
     } finally { setSaving(false); }
   }
 
   async function connectMetaMask() {
     const eth = (window as any).ethereum;
-    if (!eth) { window.open('https://metamask.io/download.html', '_blank'); return; }
+    if (!eth) {
+      flash('MetaMask not found. Install it from metamask.io', 'info');
+      setTimeout(() => window.open('https://metamask.io/download.html', '_blank'), 1000);
+      return;
+    }
     try {
       const accounts = await eth.request({ method: 'eth_requestAccounts' });
-      const addr = accounts[0];
-      if (addr) { setManualAddr(addr); await saveWallet(addr); }
-    } catch (e: any) { setMsg(`❌ ${e.message}`); }
+      const addr = accounts?.[0];
+      if (addr) { setInput(addr); await save(addr); }
+    } catch (e: any) {
+      flash(e.code === 4001 ? 'Connection rejected in MetaMask' : e.message, 'err');
+    }
   }
 
-  async function connectWalletConnect() {
-    setMsg('ℹ️ WalletConnect coming soon — use MetaMask or enter address manually');
-    setTimeout(() => setMsg(''), 3000);
+  function disconnect() {
+    if (!confirm('Disconnect wallet? Agents will stop routing earnings until you reconnect.')) return;
+    localStorage.removeItem('agentfi_wallet');
+    setWallet(null); setInput(''); setBalance(null);
+    // Also clear from backend
+    fetch(`${API_BASE}/auth/wallet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+      body: JSON.stringify({ walletAddress: null }),
+    }).catch(() => {});
+    flash('Wallet disconnected', 'info');
   }
 
-  const pendingUsd = (earnings.pending * ethPrice).toFixed(4);
-  const totalUsd = (earnings.total * ethPrice).toFixed(2);
+  async function sweepEarnings() {
+    if (!wallet) { flash('Connect a wallet first', 'err'); return; }
+    setSweep(true);
+    flash('🚀 Dispatching Execution Agent to prepare sweep transaction…', 'info');
+    try {
+      await fetch(`${API_BASE}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ action: `Route agent earnings to wallet ${wallet}`, agentType: 'execution' }),
+      });
+      flash('✅ Execution agent deployed. Check Dashboard for the transaction details.', 'ok');
+    } catch (e: any) {
+      flash(e.message, 'err');
+    } finally { setSweep(false); }
+  }
+
+  const completed = tasks.filter(t => t.status === 'completed').length;
+  const pendingEth = (completed * 0.001).toFixed(4);
+  const totalEth   = (completed * 0.0035).toFixed(4);
+
+  const msgStyle: Record<Msg['type'], string> = {
+    ok:   'bg-emerald-500/10 border-emerald-500/25 text-emerald-400',
+    err:  'bg-red-500/10 border-red-500/25 text-red-400',
+    info: 'bg-blue-500/10 border-blue-500/25 text-blue-300',
+  };
 
   return (
-    <div className="min-h-screen bg-[#060b16] text-white flex flex-col">
-      <TopNav username={user?.username} />
+    <div className="min-h-screen bg-[#050c18] flex flex-col">
+      <TopNav wsStatus={wsStatus} />
 
-      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-8 pb-24 md:pb-8 space-y-4">
+      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6 pb-24 md:pb-6 space-y-4 page-enter">
 
-        {/* Connection status */}
+        <div>
+          <h1 className="text-xl font-bold text-white">Wallet</h1>
+          <p className="text-gray-400 text-sm">Connect your wallet to receive agent earnings</p>
+        </div>
+
+        {msg && (
+          <div className={`px-4 py-3 rounded-xl border text-sm animate-fade-in leading-relaxed ${msgStyle[msg.type]}`}>
+            {msg.text}
+          </div>
+        )}
+
+        {/* ── Connected status card ── */}
         {wallet ? (
-          <div className="glass rounded-2xl p-5 border border-emerald-700/20 animate-fade-in">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
+          <div className="glass rounded-2xl p-5 border border-emerald-600/25 animate-fade-in">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-                  <span className="text-emerald-400 font-semibold text-sm">Wallet Connected</span>
+                  <span className="text-emerald-400 font-semibold text-sm">Connected</span>
+                  <span className="text-gray-600 text-xs">{chain.name}</span>
                 </div>
                 <p className="text-white font-mono text-sm break-all">{wallet}</p>
-
-                {/* Live balance */}
-                <div className="mt-3">
-                  {balanceLoading ? (
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />
-                      <span className="text-gray-500 text-xs">Loading balance…</span>
-                    </div>
-                  ) : balance ? (
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-white font-bold text-lg">{balance.eth} ETH</span>
-                      <span className="text-gray-500 text-sm">≈ ${balance.usd} USD</span>
-                    </div>
-                  ) : (
-                    <div className="text-gray-500 text-xs">
-                      Balance unavailable — add ALCHEMY_API_KEY to Railway backend
-                    </div>
-                  )}
-                </div>
               </div>
-              <div className="flex flex-col gap-2 flex-shrink-0 text-right">
-                <a
-                  href={`${chain.explorer}${wallet}`}
-                  target="_blank" rel="noopener noreferrer"
-                  className="text-xs text-blue-400 hover:text-blue-300"
-                >
+              <div className="flex flex-col gap-1.5 text-right flex-shrink-0">
+                <a href={`${chain.explorer}${wallet}`} target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
                   Explorer ↗
                 </a>
-                <button
-                  onClick={() => fetchBalance(wallet)}
-                  className="text-xs text-gray-500 hover:text-gray-300"
-                >
+                <button onClick={() => loadBalance(wallet)}
+                  className="text-xs text-gray-500 hover:text-gray-300 transition-colors">
                   Refresh ↻
                 </button>
-                <button
-                  onClick={() => { setWallet(null); setManualAddr(''); localStorage.removeItem('agentfi_wallet'); }}
-                  className="text-xs text-red-400 hover:text-red-300"
-                >
+                <button onClick={disconnect}
+                  className="text-xs text-red-400 hover:text-red-300 transition-colors">
                   Disconnect
                 </button>
               </div>
             </div>
+
+            {/* Balance display */}
+            <div className="bg-black/30 rounded-xl p-4">
+              {balLoad ? (
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-gray-400 text-sm">Fetching balance from Alchemy…</span>
+                </div>
+              ) : balance ? (
+                <div>
+                  <p className="text-white font-mono text-2xl font-bold">{balance.eth} ETH</p>
+                  <p className="text-gray-400 text-sm mt-1">≈ ${balance.usd} USD</p>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-gray-500 text-sm">Balance loading failed</p>
+                  <p className="text-gray-600 text-xs mt-1">Backend needs ALCHEMY_API_KEY in Railway variables</p>
+                </div>
+              )}
+            </div>
           </div>
         ) : (
-          <div className="glass rounded-2xl p-5 border border-amber-700/20 animate-fade-in">
-            <p className="text-amber-400 font-semibold text-sm mb-1">⚠️ No Wallet Connected</p>
-            <p className="text-amber-400/60 text-xs">Connect a wallet so agents know where to route earnings</p>
+          <div className="glass rounded-2xl p-4 border border-amber-600/25 animate-fade-in">
+            <div className="flex items-center gap-2">
+              <span className="text-amber-400 text-lg">⚠️</span>
+              <div>
+                <p className="text-amber-400 text-sm font-semibold">No wallet connected</p>
+                <p className="text-amber-400/60 text-xs">Connect below to receive agent earnings</p>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Earnings ledger */}
-        <div className="glass rounded-2xl p-5">
+        {/* ── Earnings ── */}
+        <div className="glass rounded-2xl p-5 animate-fade-in">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-white">Earnings Ledger</h2>
-            <span className="text-gray-500 text-xs">{earnings.tasks} tasks completed</span>
+            <h2 className="text-sm font-semibold text-white">Agent Earnings Ledger</h2>
+            <span className="text-gray-500 text-xs">{completed} tasks completed</span>
           </div>
           <div className="grid grid-cols-2 gap-3 mb-4">
             <div className="bg-black/30 rounded-xl p-4 text-center">
-              <p className="text-gray-500 text-xs mb-1">Pending Sweep</p>
-              <p className="text-white font-bold">{earnings.pending.toFixed(4)} ETH</p>
-              <p className="text-gray-600 text-xs mt-0.5">≈ ${pendingUsd}</p>
+              <p className="text-gray-500 text-xs mb-1.5">Pending Sweep</p>
+              <p className="text-white font-bold font-mono text-lg">{pendingEth}</p>
+              <p className="text-gray-600 text-xs">ETH</p>
             </div>
             <div className="bg-black/30 rounded-xl p-4 text-center">
-              <p className="text-gray-500 text-xs mb-1">Total Earned</p>
-              <p className="text-emerald-400 font-bold">{earnings.total.toFixed(4)} ETH</p>
-              <p className="text-gray-600 text-xs mt-0.5">≈ ${totalUsd}</p>
+              <p className="text-gray-500 text-xs mb-1.5">Total Earned</p>
+              <p className="text-emerald-400 font-bold font-mono text-lg">{totalEth}</p>
+              <p className="text-gray-600 text-xs">ETH</p>
             </div>
           </div>
 
-          {wallet && earnings.pending > 0 ? (
-            <button className="w-full bg-emerald-600 hover:bg-emerald-500 rounded-xl py-2.5 text-white text-sm font-semibold transition-colors">
-              Sweep {earnings.pending.toFixed(4)} ETH to Wallet
+          {wallet && completed > 0 ? (
+            <button onClick={sweepEarnings} disabled={sweeping}
+              className="btn-primary w-full justify-center">
+              {sweeping
+                ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Deploying sweep agent…</>
+                : `💸 Sweep ${pendingEth} ETH to Wallet`}
             </button>
+          ) : !wallet ? (
+            <p className="text-center text-gray-500 text-xs">Connect a wallet to sweep earnings</p>
           ) : (
             <div className="bg-blue-900/20 border border-blue-700/20 rounded-xl p-3 text-xs text-blue-300">
-              💡 Run Trading or Execution agent tasks to accumulate earnings
+              💡 Complete tasks with the Trading or Research agent to accumulate earnings
             </div>
           )}
         </div>
 
-        {/* Connect wallet */}
-        <div className="glass rounded-2xl p-5">
+        {/* ── Connect section ── */}
+        <div className="glass rounded-2xl p-5 animate-fade-in">
           <h2 className="text-sm font-semibold text-white mb-4">Connect Wallet</h2>
           <div className="space-y-3">
             <button onClick={connectMetaMask}
-              className="flex items-center gap-3 w-full bg-[#F6851B] hover:bg-[#E2761B] rounded-xl px-4 py-3 text-white font-semibold transition-all active:scale-[0.99]">
-              <span className="text-xl">🦊</span> Connect MetaMask
+              className="flex items-center gap-3 w-full bg-[#F6851B] hover:bg-[#E07217] rounded-xl px-4 py-3.5 text-white font-semibold transition-all active:scale-[0.98] shadow-lg shadow-orange-900/20">
+              <span className="text-2xl">🦊</span>
+              <div className="text-left">
+                <p className="font-bold">MetaMask</p>
+                <p className="text-orange-200 text-xs font-normal">Most popular · instant connect</p>
+              </div>
             </button>
-            <button onClick={connectWalletConnect}
-              className="flex items-center gap-3 w-full bg-blue-700/30 hover:bg-blue-700/50 border border-blue-600/30 rounded-xl px-4 py-3 text-white font-semibold transition-all">
-              <span className="text-xl">🔗</span> WalletConnect
+            <button onClick={() => flash('WalletConnect support coming soon. Use MetaMask or manual entry.', 'info')}
+              className="flex items-center gap-3 w-full bg-blue-700/15 hover:bg-blue-700/25 border border-blue-600/25 rounded-xl px-4 py-3.5 text-white font-semibold transition-all">
+              <span className="text-2xl">🔗</span>
+              <div className="text-left">
+                <p className="font-bold">WalletConnect</p>
+                <p className="text-blue-300/60 text-xs font-normal">Coming soon</p>
+              </div>
             </button>
           </div>
         </div>
 
-        {/* Manual entry */}
-        <div className="glass rounded-2xl p-5">
+        {/* ── Manual entry ── */}
+        <div className="glass rounded-2xl p-5 animate-fade-in">
           <h2 className="text-sm font-semibold text-white mb-1">Enter Address Manually</h2>
-          <p className="text-gray-400 text-sm mb-4">Ledger, Trezor, Coinbase Wallet, any 0x address</p>
-          <input
-            type="text"
-            value={manualAddr}
-            onChange={e => setManualAddr(e.target.value)}
-            placeholder="0x..."
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500 mb-3"
+          <p className="text-gray-400 text-xs mb-4">Ledger, Trezor, Coinbase Wallet, Safe — any 0x address</p>
+          <input type="text" value={input} onChange={e => setInput(e.target.value)}
+            placeholder="0x..." className="input-field font-mono mb-3"
+            onKeyDown={e => { if (e.key === 'Enter' && input.trim()) save(input); }}
           />
-          {msg && (
-            <p className={`text-sm mb-3 ${msg.startsWith('❌') ? 'text-red-400' : msg.startsWith('ℹ️') ? 'text-blue-400' : 'text-emerald-400'}`}>{msg}</p>
-          )}
-          <button onClick={() => saveWallet(manualAddr)} disabled={saving || !manualAddr.trim()}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-xl py-3 text-white font-semibold text-sm transition-colors">
-            {saving ? 'Saving…' : 'Save & Connect'}
+          <button onClick={() => save(input)} disabled={saving || !input.trim()}
+            className="btn-primary w-full justify-center">
+            {saving
+              ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Saving…</>
+              : 'Save & Connect'}
           </button>
         </div>
 
-        {/* Chain selector */}
-        <div className="glass rounded-2xl p-5">
+        {/* ── Network selector ── */}
+        <div className="glass rounded-2xl p-5 animate-fade-in">
           <h2 className="text-sm font-semibold text-white mb-1">Network</h2>
-          <p className="text-gray-400 text-sm mb-4">Select chain for agent operations</p>
+          <p className="text-gray-400 text-xs mb-4">Select chain for earnings routing</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {CHAINS.map(c => (
               <button key={c.id} onClick={() => setChain(c)}
                 className={`flex items-center gap-2 p-3 rounded-xl border transition-all ${
                   chain.id === c.id
-                    ? 'border-blue-500/50 bg-blue-900/20'
-                    : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.05]'
-                }`}
-              >
-                <span className="text-lg">{c.icon}</span>
+                    ? 'border-blue-500/40 bg-blue-900/20'
+                    : 'border-white/[0.06] hover:border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'
+                }`}>
+                <span className={`text-xl ${c.color}`}>{c.icon}</span>
                 <div className="text-left min-w-0">
-                  <p className="text-white text-xs font-medium truncate">{c.name}</p>
+                  <p className="text-white text-xs font-semibold truncate">{c.name}</p>
                   <p className="text-gray-500 text-xs">{c.symbol}</p>
                 </div>
               </button>
@@ -279,27 +306,27 @@ export default function WalletPage() {
           </div>
         </div>
 
-        {/* How earnings work */}
-        <div className="glass rounded-2xl p-5 border border-violet-700/20">
-          <h2 className="text-sm font-semibold text-white mb-3">🚀 How to Earn Real Crypto</h2>
-          <ol className="space-y-2">
+        {/* ── How to earn ── */}
+        <div className="glass rounded-2xl p-5 border border-violet-600/15 animate-fade-in">
+          <h2 className="text-sm font-semibold text-white mb-4">🚀 How to Earn Real Crypto</h2>
+          <ol className="space-y-3">
             {[
-              'Connect your wallet above',
-              'Go to Agents page → deploy a Trading agent',
-              'Agent finds arbitrage/yield → prepares transaction',
-              'You approve in MetaMask → profit hits your wallet',
-              'Repeat with different agent tasks daily',
-            ].map((step, i) => (
-              <li key={i} className="flex gap-3 text-sm text-gray-300">
-                <span className="text-blue-400 font-bold flex-shrink-0 w-4">{i + 1}.</span>
-                <span>{step}</span>
+              'Connect your MetaMask wallet above',
+              'Go to Agents → deploy a Trading or Research agent',
+              'Agent autonomously finds arbitrage and yield opportunities',
+              'Review the proposed transaction before any execution',
+              'Approve in MetaMask → profit lands directly in your wallet',
+            ].map((s, i) => (
+              <li key={i} className="flex gap-3">
+                <span className="text-blue-400 font-bold text-sm flex-shrink-0 w-5 mt-0.5">{i + 1}.</span>
+                <span className="text-gray-300 text-sm leading-relaxed">{s}</span>
               </li>
             ))}
           </ol>
-          <div className="mt-4 p-3 bg-amber-900/20 border border-amber-700/20 rounded-xl">
-            <p className="text-amber-300 text-xs">
-              <strong>Add to Railway backend:</strong> ALCHEMY_API_KEY (alchemy.com — free) enables live on-chain balance checking before every execution.
-            </p>
+          <div className="mt-4">
+            <Link href="/agents" className="btn-primary w-full justify-center">
+              🤖 Go to Agents →
+            </Link>
           </div>
         </div>
 

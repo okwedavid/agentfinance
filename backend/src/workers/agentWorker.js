@@ -1,264 +1,103 @@
 /**
- * BullMQ Agent Worker
+ * agentWorker.js
+ * BullMQ worker that processes tasks using the multi-provider agentRunner.
  *
- * Listens to the 'agent-tasks' queue and processes each task by:
- *   1. Loading the task from Postgres
- *   2. Classifying the prompt → agent type
- *   3. Running the agentic loop via agentRunner
- *   4. Streaming live events to frontend via Redis pub/sub → WebSocket
- *   5. Writing the final result back to Postgres
- *   6. If earnings detected → recording in analytics ledger
- *
- * Start this worker alongside the Express server.
- * In Railway: add this to the start command or run as a separate service.
+ * Add to backend/src/index.js:
+ *   import './workers/agentWorker.js';
  */
-
-import { Worker, QueueEvents } from 'bullmq';
+import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
-import { PrismaClient } from '@prisma/client';
-import { classifyTask } from '../agents/taskClassifier.js';
-import { runAgent } from '../agents/agentRunner.js';
-import logger from '../utils/logger.js';
+import prisma from '../prismaClient.js';
+import runAgent from '../agents/agentRunner.js';
 
-const prisma = new PrismaClient();
+const REDIS_URL = process.env.REDIS_URL;
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const QUEUE_NAME = 'agent-tasks';
+if (!REDIS_URL || REDIS_URL.includes('{{')) {
+  console.warn('[Worker] REDIS_URL not configured — agent worker disabled. Fix: Redis.REDIS_URL in Railway variables');
+} else {
+  const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 
-// Separate Redis connection for the worker (BullMQ requires maxRetriesPerRequest: null)
-const workerRedis = new IORedis(REDIS_URL, {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-});
+  const worker = new Worker('agent-tasks', async (job) => {
+    const { taskId, action, agentId } = job.data;
+    console.log(`[Worker] Processing task ${taskId}: ${action?.slice(0, 60)}`);
 
-// Publisher for live frontend events (separate connection — don't block the worker)
-const pubRedis = new IORedis(REDIS_URL, {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-});
-
-// ─── Event publisher ──────────────────────────────────────────────────────────
-
-async function publishEvent(channel, payload) {
-  try {
-    await pubRedis.publish(channel, JSON.stringify(payload));
-  } catch (err) {
-    logger.error(`Failed to publish event to ${channel}: ${err.message}`);
-  }
-}
-
-// ─── Worker ───────────────────────────────────────────────────────────────────
-
-const worker = new Worker(
-  QUEUE_NAME,
-  async (job) => {
-    const { taskId, action, agentId, userId } = job.data;
-    logger.info(`Worker picked up job ${job.id} — taskId: ${taskId}, action: ${action}`);
-
-    // 1. Load task from DB
-    let task;
-    try {
-      task = await prisma.task.findUnique({
-        where: { id: taskId },
-        include: { Agent: true },
-      });
-    } catch (err) {
-      logger.error(`DB error loading task ${taskId}: ${err.message}`);
-      throw err;
-    }
-
-    if (!task) {
-      logger.warn(`Task ${taskId} not found in DB — skipping`);
-      return { skipped: true };
-    }
-
-    // 2. Mark task as running
+    // Mark as running
     await prisma.task.update({
       where: { id: taskId },
       data: { status: 'running', startedAt: new Date() },
-    });
+    }).catch(e => console.error('[Worker] DB update running:', e.message));
 
-    await publishEvent('agentfi:tasks', {
-      type: 'task:updated',
-      data: { id: taskId, status: 'running', startedAt: new Date() },
-    });
+    // Publish WS event
+    const publish = (type, extra = {}) =>
+      connection.publish('agentfi:tasks', JSON.stringify({ type, taskId, action, ...extra }));
+    await publish('task:running');
 
-    // 3. Classify the prompt → get agent type + system prompt
-    const prompt = task.action || action || 'Analyse the best crypto opportunity right now';
-    const agentConfig = classifyTask(prompt);
-
-    logger.info(`Task ${taskId} classified as: ${agentConfig.type} (${agentConfig.label})`);
-
-    await publishEvent('agentfi:tasks', {
-      type: 'task:classified',
-      data: {
-        id: taskId,
-        agentType: agentConfig.type,
-        agentLabel: agentConfig.label,
-      },
-    });
-
-    // 4. Get user's wallet address if available
-    let walletAddress = null;
-    if (userId) {
-      try {
-        const user = await prisma.user.findUnique({ where: { id: userId } });
-        walletAddress = user?.walletAddress || null;
-      } catch (e) {
-        logger.warn(`Could not load wallet for user ${userId}`);
-      }
+    // Classify agent type from action text
+    function classifyAgent(text) {
+      const t = text.toLowerCase();
+      if (t.includes('trade') || t.includes('arbitrage') || t.includes('swap') || t.includes('buy') || t.includes('sell')) return 'trading';
+      if (t.includes('write') || t.includes('newsletter') || t.includes('article') || t.includes('thread') || t.includes('content')) return 'content';
+      if (t.includes('send') || t.includes('transfer') || t.includes('route') || t.includes('sweep') || t.includes('wallet')) return 'execution';
+      if (t.includes('research') || t.includes('find') || t.includes('analyse') || t.includes('best') || t.includes('top') || t.includes('yield')) return 'research';
+      return 'coordinator';
     }
 
-    // 5. Build the onEvent callback — streams every step to frontend
-    const onEvent = (event) => {
-      publishEvent('agentfi:tasks', {
-        type: event.type,
+    const agentType = classifyAgent(action || '');
+
+    // Get user wallet from DB (for execution agent)
+    let walletAddress = null;
+    try {
+      const task = await prisma.task.findUnique({ where: { id: taskId }, include: { Agent: true } });
+      // Try to get wallet from user record
+      if (task?.agentId) {
+        const agent = await prisma.agent.findUnique({ where: { id: task.agentId } });
+        walletAddress = agent?.walletAddress || null;
+      }
+    } catch {}
+
+    try {
+      const result = await runAgent({ action, agentType, walletAddress });
+
+      // Save result
+      await prisma.task.update({
+        where: { id: taskId },
         data: {
-          taskId,
-          ...event,
+          status: 'completed',
+          completedAt: new Date(),
+          result: JSON.stringify({
+            output: result.output,
+            summary: result.output?.slice(0, 300),
+            provider: result.provider,
+            agentType: result.agentType,
+          }),
         },
       });
-      // Also log token usage events for analytics
-      if (event.type === 'agent:tool_call') {
-        logger.info(`[TOOL] ${event.tool} called for task ${taskId}`);
-      }
-    };
 
-    // 6. Run the agent
-    let agentResult;
-    try {
-      agentResult = await runAgent({
-        taskId,
-        agentType: agentConfig.type,
-        systemPrompt: agentConfig.systemPrompt,
-        userPrompt: prompt,
-        walletAddress,
-        onEvent,
-      });
+      await publish('task:completed', { provider: result.provider });
+      console.log(`[Worker] ✅ Task ${taskId} completed via ${result.provider}`);
+
     } catch (err) {
-      logger.error(`Agent failed for task ${taskId}: ${err.message}`);
-
+      console.error(`[Worker] ❌ Task ${taskId} failed:`, err.message);
       await prisma.task.update({
         where: { id: taskId },
         data: {
           status: 'failed',
-          result: JSON.stringify({ error: err.message }),
           completedAt: new Date(),
+          result: JSON.stringify({ error: err.message }),
         },
-      });
+      }).catch(() => {});
 
-      await publishEvent('agentfi:tasks', {
-        type: 'task:updated',
-        data: { id: taskId, status: 'failed', error: err.message },
-      });
-
-      throw err; // Let BullMQ handle retry
+      await publish('task:failed', { error: err.message });
+      throw err; // BullMQ will retry based on job config
     }
+  }, {
+    connection,
+    concurrency: 3,
+    limiter: { max: 10, duration: 60_000 }, // 10 tasks/minute max
+  });
 
-    // 7. Write result to DB
-    const completedTask = await prisma.task.update({
-      where: { id: taskId },
-      data: {
-        status: 'completed',
-        result: JSON.stringify({
-          output: agentResult.result,
-          toolsUsed: agentResult.toolsUsed,
-          iterations: agentResult.iterations,
-          agentType: agentConfig.type,
-          completedAt: new Date().toISOString(),
-        }),
-        completedAt: new Date(),
-        duration: task.startedAt
-          ? Math.round((Date.now() - new Date(task.startedAt).getTime()))
-          : null,
-      },
-    });
+  worker.on('completed', job => console.log(`[Worker] Job ${job.id} completed`));
+  worker.on('failed', (job, err) => console.error(`[Worker] Job ${job?.id} failed:`, err.message));
 
-    // 8. Log to analytics
-    try {
-      await prisma.taskAnalytics.create({
-        data: {
-          taskId,
-          action: prompt.slice(0, 200),
-          status: 'completed',
-          durationMs: completedTask.duration,
-          result: {
-            agentType: agentConfig.type,
-            toolsUsed: agentResult.toolsUsed,
-            iterations: agentResult.iterations,
-            outputLength: agentResult.result.length,
-          },
-        },
-      });
-    } catch (e) {
-      logger.warn(`Analytics write failed for task ${taskId}: ${e.message}`);
-    }
-
-    // 9. Publish final completed event
-    await publishEvent('agentfi:tasks', {
-      type: 'task:completed',
-      data: {
-        id: taskId,
-        status: 'completed',
-        result: agentResult.result,
-        toolsUsed: agentResult.toolsUsed,
-        agentType: agentConfig.type,
-        completedAt: new Date(),
-      },
-    });
-
-    logger.info(`Task ${taskId} completed successfully — ${agentResult.toolsUsed.length} tools used, ${agentResult.iterations} iterations`);
-
-    return {
-      taskId,
-      agentType: agentConfig.type,
-      toolsUsed: agentResult.toolsUsed,
-      iterations: agentResult.iterations,
-    };
-  },
-  {
-    connection: workerRedis,
-    concurrency: 3, // Process up to 3 tasks simultaneously
-    limiter: {
-      max: 10,      // Max 10 jobs per duration
-      duration: 60000, // Per minute — respects Anthropic rate limits
-    },
-  }
-);
-
-// ─── Worker event handlers ─────────────────────────────────────────────────────
-
-worker.on('completed', (job, result) => {
-  logger.info(`Job ${job.id} completed: ${JSON.stringify(result)}`);
-});
-
-worker.on('failed', (job, err) => {
-  logger.error(`Job ${job.id} failed: ${err.message}`);
-});
-
-worker.on('stalled', (jobId) => {
-  logger.warn(`Job ${jobId} stalled — will be retried`);
-});
-
-worker.on('error', (err) => {
-  logger.error(`Worker error: ${err.message}`);
-});
-
-// ─── Graceful shutdown ────────────────────────────────────────────────────────
-
-async function shutdown() {
-  logger.info('Worker shutting down gracefully...');
-  await worker.close();
-  await workerRedis.quit();
-  await pubRedis.quit();
-  await prisma.$disconnect();
-  process.exit(0);
+  console.log('[Worker] 🤖 Agent worker started, listening for tasks…');
 }
-
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
-logger.info(`Agent worker started — listening to queue: ${QUEUE_NAME}`);
-logger.info(`Concurrency: 3 | Rate limit: 10 jobs/min`);
-
-export default worker;

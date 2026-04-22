@@ -1,202 +1,215 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getMe, apiFetch, getTasks, isLoggedIn } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+import { isLoggedIn, getTasks, API_BASE, getToken } from "@/lib/api";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import { TopNav, BottomNav, PageFooter } from "@/components/layout/Nav";
 import Link from "next/link";
 
 export default function ProfilePage() {
-  const [user, setUser] = useState<any>(null);
-  const [tasks, setTasks] = useState<any[]>([]);
-  const [editing, setEditing] = useState(false);
-  const [displayName, setDisplayName] = useState('');
-  const [bio, setBio] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState('');
+  const { user, refresh } = useAuth();
+  const [tasks, setTasks]       = useState<any[]>([]);
+  const [editing, setEditing]   = useState(false);
+  const [displayName, setDN]    = useState('');
+  const [bio, setBio]           = useState('');
+  const [saving, setSaving]     = useState(false);
+  const [msg, setMsg]           = useState('');
+  const { status: wsStatus }    = useWebSocket();
 
   useEffect(() => {
     if (!isLoggedIn()) { window.location.href = '/login'; return; }
-    getMe().then(u => {
-      setUser(u);
-      setDisplayName(u.displayName || u.username || '');
-      setBio(u.bio || '');
-    });
-    getTasks().then(t => { if (Array.isArray(t)) setTasks(t); });
-  }, []);
+    getTasks().then(setTasks).catch(() => {});
+    setDN(localStorage.getItem('af_displayName') || user?.displayName || user?.username || '');
+    setBio(localStorage.getItem('af_bio') || user?.bio || '');
+  }, [user]);
 
-  async function saveProfile() {
-    setSaving(true); setMsg('');
+  async function save() {
+    setSaving(true);
+    localStorage.setItem('af_displayName', displayName);
+    localStorage.setItem('af_bio', bio);
+    // Try backend patch
     try {
-      // Store in localStorage as fallback (backend profile endpoint optional)
-      localStorage.setItem('af_displayName', displayName);
-      localStorage.setItem('af_bio', bio);
-      setUser((prev: any) => ({ ...prev, displayName, bio }));
-      setEditing(false);
-      setMsg('✅ Profile updated');
-      setTimeout(() => setMsg(''), 3000);
-    } catch (e: any) {
-      setMsg(`❌ ${e.message}`);
-    } finally { setSaving(false); }
+      await fetch(`${API_BASE}/auth/me`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ displayName, bio }),
+      });
+    } catch {}
+    await refresh();
+    setSaving(false); setEditing(false);
+    setMsg('✅ Profile saved');
+    setTimeout(() => setMsg(''), 3000);
   }
 
-  // Stats derived from tasks
   const completed = tasks.filter(t => t.status === 'completed').length;
-  const failed = tasks.filter(t => t.status === 'failed').length;
-  const successRate = tasks.length > 0 ? Math.round((completed / tasks.length) * 100) : 0;
-
-  // Get agent types used
-  const agentTypes: Record<string, number> = {};
-  tasks.forEach(t => {
-    try {
-      const type = JSON.parse(t.result || '{}').agentType || 'coordinator';
-      agentTypes[type] = (agentTypes[type] || 0) + 1;
-    } catch {}
-  });
-  const topAgent = Object.entries(agentTypes).sort((a,b) => b[1]-a[1])[0]?.[0] || '—';
-
-  const AGENT_ICONS: Record<string, string> = {
-    research:'🔬', trading:'📈', content:'✍️', execution:'⚡', coordinator:'🧠'
-  };
-
-  // Load from localStorage
-  useEffect(() => {
-    const dn = localStorage.getItem('af_displayName');
-    const b = localStorage.getItem('af_bio');
-    if (dn) setDisplayName(dn);
-    if (b) setBio(b);
-  }, []);
-
-  const initials = (user?.username || 'U').slice(0, 2).toUpperCase();
+  const failed    = tasks.filter(t => t.status === 'failed').length;
+  const rate      = tasks.length > 0 ? Math.round(completed / tasks.length * 100) : 0;
+  const wallet    = typeof window !== 'undefined' ? localStorage.getItem('agentfi_wallet') : null;
+  const initials  = (displayName || user?.username || 'U').slice(0, 2).toUpperCase();
+  const earnings  = (completed * 0.0035).toFixed(4);
 
   return (
-    <div className="min-h-screen bg-[#060b16] text-white flex flex-col">
-      <TopNav username={user?.username} />
+    <div className="min-h-screen bg-[#050c18] flex flex-col">
+      <TopNav wsStatus={wsStatus} />
 
-      <main className="flex-1 max-w-3xl mx-auto w-full px-4 py-8 pb-24 md:pb-8">
+      <main className="flex-1 max-w-3xl mx-auto w-full px-4 py-6 pb-24 md:pb-6 space-y-4 page-enter">
 
-        {/* Profile card */}
-        <div className="glass rounded-2xl p-6 mb-5 animate-fade-in">
+        <div>
+          <h1 className="text-xl font-bold text-white">Profile</h1>
+          <p className="text-gray-400 text-sm">Manage your identity and view agent history</p>
+        </div>
+
+        {/* Profile hero card */}
+        <div className="glass rounded-2xl p-6 animate-fade-in">
           <div className="flex items-start gap-5">
             {/* Avatar */}
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-600 to-violet-600 flex items-center justify-center text-2xl font-bold flex-shrink-0">
-              {initials}
+            <div className="relative flex-shrink-0">
+              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-2xl font-black animate-glow">
+                {initials}
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full border-2 border-[#050c18] flex items-center justify-center">
+                <div className="w-2 h-2 bg-white rounded-full" />
+              </div>
             </div>
 
             <div className="flex-1 min-w-0">
               {editing ? (
-                <div className="space-y-3">
-                  <input
-                    value={displayName}
-                    onChange={e => setDisplayName(e.target.value)}
-                    placeholder="Display name"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
-                  />
-                  <textarea
-                    value={bio}
-                    onChange={e => setBio(e.target.value)}
-                    placeholder="Bio (optional)"
-                    rows={2}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 resize-none"
-                  />
+                <div className="space-y-3 animate-fade-in">
+                  <input value={displayName} onChange={e => setDN(e.target.value)}
+                    placeholder="Display name" className="input-field" autoFocus />
+                  <textarea value={bio} onChange={e => setBio(e.target.value)}
+                    placeholder="Short bio about yourself…" rows={2}
+                    className="input-field resize-none" />
                   <div className="flex gap-2">
-                    <button onClick={saveProfile} disabled={saving}
-                      className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-40">
-                      {saving ? 'Saving…' : 'Save'}
+                    <button onClick={save} disabled={saving} className="btn-primary">
+                      {saving
+                        ? <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Saving…</>
+                        : 'Save profile'}
                     </button>
-                    <button onClick={() => setEditing(false)}
-                      className="bg-white/5 hover:bg-white/10 px-4 py-2 rounded-xl text-sm transition-colors">
-                      Cancel
-                    </button>
+                    <button onClick={() => setEditing(false)} className="btn-ghost">Cancel</button>
                   </div>
                 </div>
               ) : (
-                <>
+                <div className="animate-fade-in">
                   <div className="flex items-center gap-3 mb-1">
-                    <h1 className="text-xl font-bold text-white">{displayName || user?.username}</h1>
+                    <h2 className="text-xl font-bold text-white">{displayName || user?.username || 'Agent'}</h2>
                     <button onClick={() => setEditing(true)}
-                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors border border-blue-500/25 px-2 py-0.5 rounded-lg">
                       Edit
                     </button>
                   </div>
-                  <p className="text-gray-500 text-sm">@{user?.username}</p>
-                  {bio && <p className="text-gray-300 text-sm mt-2">{bio}</p>}
-                  {user?.walletAddress && (
-                    <p className="text-gray-600 text-xs mt-2 font-mono truncate">{user.walletAddress}</p>
+                  <p className="text-gray-500 text-sm mb-2">@{user?.username}</p>
+                  {bio && <p className="text-gray-300 text-sm leading-relaxed">{bio}</p>}
+                  {wallet && (
+                    <p className="text-gray-600 text-xs font-mono mt-2 truncate">
+                      {wallet.slice(0, 6)}…{wallet.slice(-4)}
+                    </p>
                   )}
-                </>
+                </div>
               )}
-              {msg && <p className={`text-sm mt-2 ${msg.startsWith('❌') ? 'text-red-400' : 'text-emerald-400'}`}>{msg}</p>}
+              {msg && <p className="text-emerald-400 text-sm mt-2 animate-fade-in">{msg}</p>}
             </div>
           </div>
         </div>
 
         {/* Stats grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 stagger-children">
           {[
-            { label: 'Total Tasks', value: tasks.length, color: 'text-white', icon: '📋' },
-            { label: 'Completed', value: completed, color: 'text-emerald-400', icon: '✅' },
-            { label: 'Success Rate', value: `${successRate}%`, color: 'text-blue-400', icon: '🎯' },
-            { label: 'Top Agent', value: `${AGENT_ICONS[topAgent] || '🤖'} ${topAgent}`, color: 'text-violet-400', icon: '⭐' },
-          ].map(s => (
-            <div key={s.label} className="glass rounded-xl px-4 py-3">
-              <p className="text-gray-500 text-xs mb-1">{s.label}</p>
-              <p className={`text-lg font-bold ${s.color} capitalize`}>{s.value}</p>
+            { icon: '📋', label: 'Total Tasks',  value: tasks.length,      color: 'text-white' },
+            { icon: '✅', label: 'Completed',    value: completed,          color: 'text-emerald-400' },
+            { icon: '🎯', label: 'Success Rate', value: `${rate}%`,         color: 'text-blue-400' },
+            { icon: '💰', label: 'Est. Earned',  value: `${earnings} ETH`, color: 'text-amber-400' },
+          ].map((s, i) => (
+            <div key={s.label}
+              className="glass rounded-xl p-4 animate-fade-in card-glow"
+              style={{ animationDelay: `${i * 60}ms` }}>
+              <div className="text-2xl mb-3">{s.icon}</div>
+              <p className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</p>
+              <p className="text-gray-500 text-xs mt-0.5">{s.label}</p>
             </div>
           ))}
         </div>
 
-        {/* Recent activity */}
-        <div className="glass rounded-2xl overflow-hidden mb-5">
-          <div className="px-5 py-4 border-b border-white/[0.05] flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">Recent Tasks</h2>
-            <Link href="/analytics" className="text-xs text-blue-400 hover:text-blue-300">View all →</Link>
+        {/* Recent task activity */}
+        <div className="glass rounded-2xl overflow-hidden animate-fade-in">
+          <div className="px-5 py-4 border-b border-white/[0.06] flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">Recent Activity</h2>
+            <Link href="/analytics" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+              View all →
+            </Link>
           </div>
           <div className="divide-y divide-white/[0.04]">
             {tasks.length === 0 ? (
-              <div className="p-8 text-center text-gray-500 text-sm">
-                No tasks yet. <Link href="/dashboard" className="text-blue-400">Create one →</Link>
+              <div className="p-8 text-center">
+                <div className="text-3xl mb-2 animate-float">🤖</div>
+                <p className="text-gray-500 text-sm">No tasks yet.</p>
+                <Link href="/dashboard" className="text-blue-400 text-sm hover:text-blue-300">
+                  Deploy your first agent →
+                </Link>
               </div>
-            ) : tasks.slice(0, 8).map(task => {
-              let agentType = 'coordinator';
-              try { agentType = JSON.parse(task.result || '{}').agentType || 'coordinator'; } catch {}
-              return (
-                <div key={task.id} className="flex items-center gap-3 px-5 py-3">
-                  <span className="text-base">{AGENT_ICONS[agentType] || '🤖'}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white/80 text-sm truncate">{task.action}</p>
-                    <p className="text-gray-600 text-xs">{new Date(task.createdAt).toLocaleDateString()}</p>
-                  </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-md border flex-shrink-0 ${
-                    task.status === 'completed' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-600/20' :
-                    task.status === 'failed' ? 'bg-red-500/10 text-red-300 border-red-600/20' :
-                    task.status === 'running' ? 'bg-blue-500/10 text-blue-300 border-blue-600/20' :
-                    'bg-yellow-500/10 text-yellow-300 border-yellow-600/20'
-                  }`}>{task.status}</span>
+            ) : tasks.slice(0, 8).map(t => (
+              <div key={t.id} className="flex items-center gap-3 px-5 py-3 hover:bg-white/[0.02] transition-colors">
+                <span className="text-base flex-shrink-0">
+                  {t.status === 'completed' ? '✅' : t.status === 'failed' ? '❌' : t.status === 'running' ? '⚡' : '⏳'}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white/80 text-sm truncate">{t.action}</p>
+                  <p className="text-gray-600 text-xs">
+                    {new Date(t.createdAt || Date.now()).toLocaleDateString('en-US', {
+                      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                    })}
+                  </p>
                 </div>
-              );
-            })}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${
+                  t.status === 'completed' ? 'badge-completed' :
+                  t.status === 'failed'    ? 'badge-failed' :
+                  t.status === 'running'   ? 'badge-running' : 'badge-pending'
+                }`}>{t.status}</span>
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* Wallet quick status */}
-        <div className="glass rounded-2xl p-5">
-          <h2 className="text-sm font-semibold text-white mb-3">Wallet</h2>
-          {user?.walletAddress ? (
+        {/* Wallet status */}
+        <div className="glass rounded-2xl p-5 animate-fade-in">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-white">Wallet</h2>
+            <Link href="/wallet" className="text-xs text-blue-400 hover:text-blue-300">Manage →</Link>
+          </div>
+          {wallet ? (
             <div className="flex items-center gap-3">
-              <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/15 flex items-center justify-center text-emerald-400">💳</div>
               <div className="flex-1 min-w-0">
-                <p className="text-white font-mono text-sm truncate">{user.walletAddress}</p>
-                <p className="text-gray-500 text-xs">Connected — earnings route here</p>
+                <p className="text-white text-sm font-mono truncate">{wallet}</p>
+                <p className="text-emerald-400 text-xs flex items-center gap-1 mt-0.5">
+                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse inline-block" />
+                  Connected · earnings route here
+                </p>
               </div>
-              <Link href="/wallet" className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0">Manage →</Link>
             </div>
           ) : (
             <div className="flex items-center justify-between gap-3">
-              <p className="text-amber-400 text-sm">No wallet connected</p>
-              <Link href="/wallet" className="text-xs bg-amber-600/20 border border-amber-600/30 text-amber-300 px-3 py-1.5 rounded-xl hover:bg-amber-600/30 transition-colors">
-                Connect →
-              </Link>
+              <p className="text-amber-400 text-sm">⚠️ No wallet connected</p>
+              <Link href="/wallet" className="btn-primary text-xs py-2">Connect →</Link>
             </div>
           )}
+        </div>
+
+        {/* Agent capability badges */}
+        <div className="glass rounded-2xl p-5 animate-fade-in">
+          <h2 className="text-sm font-semibold text-white mb-3">Agent Access</h2>
+          <div className="flex flex-wrap gap-2">
+            {['🔬 Research','📈 Trading','✍️ Content','⚡ Execution'].map(a => (
+              <div key={a} className="flex items-center gap-1.5 text-xs bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-1.5 text-blue-300">
+                {a}
+              </div>
+            ))}
+            {['📱 Social (soon)','🛡️ Security (soon)'].map(a => (
+              <div key={a} className="flex items-center gap-1.5 text-xs bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-1.5 text-gray-500">
+                {a}
+              </div>
+            ))}
+          </div>
         </div>
 
       </main>

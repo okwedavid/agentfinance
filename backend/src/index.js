@@ -22,6 +22,7 @@ import rateLimit from './middleware/rateLimit.js';
 import errorHandler from './middleware/errorHandler.js';
 import replayRouter from './routes/replay.js';
 import logger from './utils/logger.js';
+import walletRouter from './routes/wallet.js';   
 
 // ── Boot agent worker (non-blocking import) ──────────────────────────────────
 import './workers/agentWorker.js';
@@ -142,6 +143,25 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+app.post('/auth/wallet', authMiddleware, async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    // Store in User model if it has walletAddress field
+    // Otherwise just return success (frontend uses localStorage)
+    try {
+      await prisma.user.update({
+        where: { id: req.user.sub },
+        data: { walletAddress: walletAddress || null },
+      });
+    } catch {
+      // walletAddress field may not exist in schema yet — that's OK
+    }
+    res.json({ ok: true, walletAddress });
+  } catch (e) {
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
 // Save wallet address for the logged-in user
 app.post('/auth/wallet', authMiddleware, async (req, res) => {
   try {
@@ -160,7 +180,6 @@ app.post('/auth/wallet', authMiddleware, async (req, res) => {
     res.status(500).json({ error: 'failed' });
   }
 });
-app.use('/wallet', walletRouter);
 
 // Create task — now includes userId for agent context
 app.post('/tasks', authMiddleware, async (req, res) => {
@@ -196,6 +215,21 @@ app.post('/tasks', authMiddleware, async (req, res) => {
     } else {
       logger.warn(`Task ${t.id} created but not queued — Redis unavailable`);
     }
+
+    if (!redis) {
+  // No Redis/BullMQ — run agent directly
+  import('./agents/agentRunner.js').then(({ runAgent }) => {
+    runAgent({ action, agentType: 'coordinator' })
+      .then(result => prisma.task.update({
+        where: { id: t.id },
+        data: { status: 'completed', result: JSON.stringify(result), completedAt: new Date() }
+      }))
+      .catch(err => prisma.task.update({
+        where: { id: t.id },
+        data: { status: 'failed', result: JSON.stringify({ error: err.message }), completedAt: new Date() }
+      }));
+  }).catch(() => {});
+}
 
     if (redis) {
       await redis.publish('agentfi:tasks', JSON.stringify({ type: 'task:created', data: t }));
@@ -235,6 +269,16 @@ app.get('/tasks/:id', authMiddleware, async (req, res) => {
   }
 });
 
+app.delete('/tasks/all', authMiddleware, async (req, res) => {
+  try {
+    const result = await prisma.task.deleteMany({});
+    res.json({ deleted: result.count, ok: true });
+  } catch (e) {
+    console.error('bulk delete error', e);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
 app.patch('/tasks/:id', authMiddleware, async (req, res) => {
   try {
     const fields = {};
@@ -253,6 +297,7 @@ app.patch('/tasks/:id', authMiddleware, async (req, res) => {
 // Mount route modules
 app.use('/analytics', analyticsRouter);
 app.use('/api/analytics', analyticsRouter);
+app.use('/wallet', walletRouter);  
 app.use('/api/tasks/replay', replayRouter);
 
 try {

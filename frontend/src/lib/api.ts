@@ -1,134 +1,150 @@
 /**
- * api.ts — single source of truth for all backend communication
+ * api.ts — Central API client for AgentFinance
  *
- * The frontend (agentfinance-production.up.railway.app) and backend
- * (serene-magic-production-6d0c.up.railway.app) are on different domains.
- * Every fetch must:
- *   1. Go to the correct backend URL
- *   2. Include the JWT token from localStorage
- *   3. Handle errors consistently
+ * ROOT CAUSE FIX: NEXT_PUBLIC_API_URL is set to "http://localhost:4000" in Railway.
+ * Fix: go to Railway → Frontend service → Variables → change to:
+ *   NEXT_PUBLIC_API_URL=https://serene-magic-production-6d0c.up.railway.app
+ *   NEXT_PUBLIC_WS_URL=wss://serene-magic-production-6d0c.up.railway.app
+ *
+ * Until you do that, we hardcode the fallback here.
  */
 
-const BACKEND = (
-  process.env.NEXT_PUBLIC_API_URL ||
-  'https://serene-magic-production-6d0c.up.railway.app'
-).replace(/\/$/, '');
+// Always prefer the env var but fallback to the real backend URL
+const RAW = process.env.NEXT_PUBLIC_API_URL || '';
+// If it's localhost (Railway env bug) → use real backend
+export const API_BASE =
+  RAW && !RAW.includes('localhost')
+    ? RAW.replace(/\/$/, '')
+    : 'https://serene-magic-production-6d0c.up.railway.app';
 
-function getToken(): string | null {
+export const WS_BASE = (() => {
+  const raw = process.env.NEXT_PUBLIC_WS_URL || '';
+  if (raw && !raw.includes('localhost')) return raw;
+  return 'wss://serene-magic-production-6d0c.up.railway.app';
+})();
+
+// ---------- token helpers ----------
+export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('token');
 }
-
-function authHeaders(): Record<string, string> {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+export function setToken(t: string) {
+  if (typeof window !== 'undefined') localStorage.setItem('token', t);
+}
+export function removeToken() {
+  if (typeof window !== 'undefined') localStorage.removeItem('token');
+}
+export function isLoggedIn(): boolean {
+  return !!getToken();
+}
+export function logout() {
+  removeToken();
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('agentfi_wallet');
+    localStorage.removeItem('af_displayName');
+    localStorage.removeItem('af_bio');
+  }
 }
 
-export async function apiFetch(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<any> {
-  const url = `${BACKEND}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
-
+// ---------- base fetch ----------
+export async function apiFetch(path: string, opts: RequestInit = {}): Promise<any> {
+  const token = getToken();
+  const url = `${API_BASE}${path}`;
   const res = await fetch(url, {
-    ...options,
+    ...opts,
     headers: {
       'Content-Type': 'application/json',
-      ...authHeaders(),
-      ...(options.headers as Record<string, string> || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(opts.headers || {}),
     },
-    credentials: 'include',
   });
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `API error ${res.status}`);
-  }
+  // Try parse JSON even on error so we can read error messages
+  let data: any;
+  try { data = await res.json(); } catch { data = null; }
 
-  return res.json();
+  if (!res.ok) {
+    const msg = data?.error || data?.message || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data;
 }
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
-
+// ---------- auth ----------
 export async function login(username: string, password: string) {
   const data = await apiFetch('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
   });
-  if (data.token) {
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('user', JSON.stringify({ id: data.id, username: data.username }));
-  }
+  if (data.token) setToken(data.token);
   return data;
 }
 
-export async function register(username: string, password: string) {
+export async function register(username: string, password: string, email?: string) {
   const data = await apiFetch('/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, email }),
   });
-  if (data.token) {
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('user', JSON.stringify({ id: data.id, username: data.username }));
+  if (data.token) setToken(data.token);
+  return data;
+}
+
+export async function getMe(): Promise<any> {
+  const data = await apiFetch('/auth/me');
+  // Also load local overrides
+  if (typeof window !== 'undefined') {
+    const dn = localStorage.getItem('af_displayName');
+    const b = localStorage.getItem('af_bio');
+    if (dn) data.displayName = dn;
+    if (b) data.bio = b;
+    const w = localStorage.getItem('agentfi_wallet');
+    if (w) data.walletAddress = w;
   }
   return data;
 }
 
-export async function getMe() {
-  return apiFetch('/auth/me');
+// ---------- tasks ----------
+export async function getTasks(): Promise<any[]> {
+  const data = await apiFetch('/tasks');
+  return Array.isArray(data) ? data : (data?.tasks || []);
 }
 
-export function logout() {
-  localStorage.removeItem('token');
-  localStorage.removeItem('user');
-  localStorage.removeItem('agentfi_wallet');
-}
-
-export function isLoggedIn(): boolean {
-  return !!getToken();
-}
-
-// ── Tasks ─────────────────────────────────────────────────────────────────────
-
-export async function createTask(action: string, agentId?: string) {
+export async function createTask(action: string, agentType?: string): Promise<any> {
   return apiFetch('/tasks', {
     method: 'POST',
-    body: JSON.stringify({ action, agentId }),
+    body: JSON.stringify({ action, agentType }),
   });
 }
 
-export async function getTasks() {
-  return apiFetch('/tasks');
+export async function deleteTask(id: string): Promise<any> {
+  return apiFetch(`/tasks/${id}`, { method: 'DELETE' });
 }
 
-export async function getTask(id: string) {
-  return apiFetch(`/tasks/${id}`);
+export async function deleteAllTasks(): Promise<any> {
+  // Try bulk delete endpoint, fallback to individual
+  try {
+    return await apiFetch('/tasks/all', { method: 'DELETE' });
+  } catch {
+    const tasks = await getTasks();
+    await Promise.all(tasks.map(t => deleteTask(t.id).catch(() => {})));
+    return { deleted: tasks.length };
+  }
 }
 
-export async function patchTask(id: string, patch: Record<string, any>) {
-  return apiFetch(`/tasks/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  });
+// ---------- wallet ----------
+export async function getWalletBalance(address: string): Promise<any> {
+  return apiFetch(`/wallet/balance?address=${address}`);
 }
 
-// ── Analytics ─────────────────────────────────────────────────────────────────
-
-export async function getAnalyticsSummary() {
-  return apiFetch('/analytics/summary');
+export async function saveWalletAddress(address: string): Promise<any> {
+  // Try the backend endpoint, fallback to localStorage only
+  try {
+    return await apiFetch('/auth/wallet', {
+      method: 'POST',
+      body: JSON.stringify({ walletAddress: address }),
+    });
+  } catch {
+    if (typeof window !== 'undefined') localStorage.setItem('agentfi_wallet', address);
+    return { success: true, local: true };
+  }
 }
-
-export async function getAnalyticsHistory(limit = 100, skip = 0) {
-  return apiFetch(`/analytics/history?limit=${limit}&skip=${skip}`);
-}
-
-// ── Wallet ────────────────────────────────────────────────────────────────────
-
-export async function saveWallet(walletAddress: string) {
-  return apiFetch('/auth/wallet', {
-    method: 'POST',
-    body: JSON.stringify({ walletAddress }),
-  });
-}
-
-export const API_BASE = BACKEND;
