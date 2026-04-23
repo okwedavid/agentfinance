@@ -18,7 +18,7 @@ if (!REDIS_URL || REDIS_URL.includes('{{')) {
   const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 
   const worker = new Worker('agent-tasks', async (job) => {
-    const { taskId, action, agentId } = job.data;
+    const { taskId, action, agentId, userId } = job.data;
     console.log(`[Worker] Processing task ${taskId}: ${action?.slice(0, 60)}`);
 
     // Mark as running
@@ -47,11 +47,11 @@ if (!REDIS_URL || REDIS_URL.includes('{{')) {
     // Get user wallet from DB (for execution agent)
     let walletAddress = null;
     try {
-      const task = await prisma.task.findUnique({ where: { id: taskId }, include: { Agent: true } });
-      // Try to get wallet from user record
-      if (task?.agentId) {
-        const agent = await prisma.agent.findUnique({ where: { id: task.agentId } });
-        walletAddress = agent?.walletAddress || null;
+      const task = await prisma.task.findUnique({ where: { id: taskId } });
+      const ownerId = task?.userId || userId;
+      if (ownerId) {
+        const user = await prisma.user.findUnique({ where: { id: ownerId } });
+        walletAddress = user?.walletAddress || null;
       }
     } catch {}
 

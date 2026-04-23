@@ -1,6 +1,13 @@
 "use client";
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { getMe, isLoggedIn, logout as apiLogout } from "@/lib/api";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import {
+  getMe,
+  getToken,
+  isLoggedIn,
+  login as apiLogin,
+  logout as apiLogout,
+  register as apiRegister,
+} from "@/lib/api";
 
 interface User {
   id: string;
@@ -8,7 +15,7 @@ interface User {
   displayName?: string;
   email?: string;
   bio?: string;
-  walletAddress?: string;
+  walletAddress?: string | null;
   isAdmin?: boolean;
 }
 
@@ -20,60 +27,82 @@ interface AuthCtx {
   refresh: () => Promise<void>;
   logout: () => void;
   isAdmin: boolean;
-  token?: string | null;
+  token: string | null;
 }
 
 const AuthContext = createContext<AuthCtx>({
   login: async () => {},
   register: async () => {},
-  user: null, loading: true,
-  refresh: async () => {}, logout: () => {},
+  user: null,
+  loading: true,
+  refresh: async () => {},
+  logout: () => {},
   isAdmin: false,
+  token: null,
 });
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [token, setToken] = useState<string | null>(null);
 
-  // 1. Define the missing login function
-  const login = async (username: string, password: string) => {
-    // Your login logic here (e.g., await apiLogin(username, password))
-    await refresh(); // Refresh user state after login
-  };
+  async function refresh() {
+    if (!isLoggedIn()) {
+      setUser(null);
+      setToken(null);
+      setLoading(false);
+      return;
+    }
 
-  // 2. Define the missing register function
-  const register = async (username: string, password: string) => {
-    // Your register logic here
-    await refresh();
-  };
-
-  const refresh = useCallback(async () => {
-    if (!isLoggedIn()) { setUser(null); setLoading(false); return; }
     try {
-      const u = await getMe();
-      setUser(u);
+      const me = await getMe();
+      setUser(me);
+      setToken(getToken());
     } catch {
       setUser(null);
+      setToken(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }
 
-  useEffect(() => { refresh(); }, [refresh]);
+  async function login(username: string, password: string) {
+    setLoading(true);
+    await apiLogin(username, password);
+    await refresh();
+  }
+
+  async function register(username: string, password: string) {
+    setLoading(true);
+    await apiRegister(username, password);
+    await refresh();
+  }
 
   function logout() {
     apiLogout();
     setUser(null);
-    window.location.href = '/login';
+    setToken(null);
+    window.location.href = "/login";
   }
 
-  const isAdmin = user?.isAdmin === true || user?.username === 'okwedavid';
+  useEffect(() => {
+    void refresh();
+  }, []);
 
-  return (
-    // Now 'login' and 'register' are defined and can be passed here
-    <AuthContext.Provider value={{ user, loading, refresh, logout, isAdmin, login, register }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const isAdmin = user?.isAdmin === true || user?.username === "okwedavid";
+
+  const value = useMemo(() => ({
+    login,
+    register,
+    user,
+    loading,
+    refresh,
+    logout,
+    isAdmin,
+    token,
+  }), [user, loading, isAdmin, token]);
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

@@ -1,12 +1,13 @@
 import rateLimit from 'express-rate-limit';
 
-// 100 requests per minute per IP
+// Keep app-level protection, but avoid throttling normal dashboard polling and task workflows.
 const limiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 100,
+  max: 600,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'rate_limit_exceeded' },
+  skip: (req) => req.path === '/health',
 });
 
 export default limiter;

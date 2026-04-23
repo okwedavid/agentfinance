@@ -4,8 +4,8 @@
 
 /* ─── Fonts ─────────────────────────────────────────────────────────────── */
 :root {
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  --font-sans: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Fira Code', ui-monospace, monospace;
 
   /* Design tokens */
   --bg-base:    #050c18;
@@ -29,7 +29,10 @@ html {
 body {
   min-height: 100%;
   overflow-x: hidden;          /* MOBILE FIX: belt + suspenders */
-  background: var(--bg-base);
+  background:
+    radial-gradient(circle at top left, rgba(34,211,238,0.12), transparent 28%),
+    radial-gradient(circle at top right, rgba(249,115,22,0.1), transparent 24%),
+    linear-gradient(180deg, #06111f 0%, #050c18 40%, #030712 100%);
   color: #fff;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -110,14 +113,14 @@ body {
 
 /* ─── Glass ──────────────────────────────────────────────────────────────── */
 .glass {
-  background: rgba(255,255,255,0.03);
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.025));
   border: 1px solid rgba(255,255,255,0.07);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
 
 .glass-heavy {
-  background: rgba(10,22,40,0.85);
+  background: linear-gradient(180deg, rgba(8,18,33,0.92), rgba(6,14,24,0.88));
   border: 1px solid rgba(255,255,255,0.09);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -206,6 +209,26 @@ body {
 
 /* ─── Page transitions ───────────────────────────────────────────────────── */
 .page-enter { animation: fadeIn 0.3s ease both; }
+
+.mesh-panel {
+  position: relative;
+  overflow: hidden;
+}
+
+.mesh-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(34,211,238,0.16), transparent 25%),
+    radial-gradient(circle at 80% 0%, rgba(249,115,22,0.16), transparent 20%),
+    linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+  pointer-events: none;
+}
+
+.mesh-panel > * {
+  position: relative;
+}
 
 /* ─── Number highlight ───────────────────────────────────────────────────── */
 .font-mono { font-family: var(--font-mono); }

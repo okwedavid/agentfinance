@@ -1,88 +1,104 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../prismaClient.js';
 
 const router = express.Router();
-const prisma = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL,
-    },
-  },
-});
 
-// GET /analytics/summary - aggregate summary for charts
-// DEMO_MODE: when true the API will report a forced successRate (for investor demo)
-const DEMO_MODE = true;
+function parseTaskResult(value) {
+  if (!value) return null;
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 router.get('/summary', async (req, res) => {
   try {
-    // total tasks
-    const totalRes = await prisma.$queryRaw`SELECT COUNT(*)::int AS count FROM agent_tasks`;
-    const totalTasks = totalRes && totalRes[0] ? Number(totalRes[0].count) : 0;
+    const tasks = await prisma.task.findMany({
+      where: { archived: false },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
 
-    // completed tasks
-    const compRes = await prisma.$queryRaw`SELECT COUNT(*)::int AS count FROM agent_tasks WHERE status = 'completed'`;
-    const completed = compRes && compRes[0] ? Number(compRes[0].count) : 0;
+    const totalTasks = tasks.length;
+    const completed = tasks.filter((task) => task.status === 'completed').length;
+    const failed = tasks.filter((task) => task.status === 'failed').length;
+    const running = tasks.filter((task) => task.status === 'running').length;
 
-    // agents and per-agent counts
-    const agentsRows = await prisma.$queryRaw`SELECT agent_name AS agent, COUNT(*)::int AS tasks FROM agent_tasks GROUP BY agent_name ORDER BY tasks DESC`;
-    const agents = agentsRows.map(r => ({ agent: r.agent, tasks: Number(r.tasks) }));
+    const successRate = totalTasks ? Math.round((completed / totalTasks) * 100) : 0;
 
-    // 7-day trend
-    const trendsRows = await prisma.$queryRaw`
-      SELECT to_char(created_at::date, 'YYYY-MM-DD') AS date, COUNT(*)::int AS tasks
-      FROM agent_tasks
-      WHERE created_at >= now() - interval '6 days'
-      GROUP BY date
-      ORDER BY date
-    `;
+    const agentMap = new Map();
+    tasks.forEach((task) => {
+      const parsed = parseTaskResult(task.result);
+      const name = parsed?.agentType || task.agentId || 'coordinator';
+      agentMap.set(name, (agentMap.get(name) || 0) + 1);
+    });
 
-    const trends = trendsRows.map(r => ({ date: r.date, tasks: Number(r.tasks) }));
+    const agents = [...agentMap.entries()]
+      .map(([agent, count]) => ({ agent, tasks: count }))
+      .sort((a, b) => b.tasks - a.tasks);
 
-    const realSuccessRate = Math.round((completed / (totalTasks || 1)) * 100);
-    const successRate = DEMO_MODE ? 75 : realSuccessRate;
-
-    // If demo mode, synthesize a friendly 7-day trend for visuals
-    const demoTrends = Array.from({ length: 7 }, (_, i) => ({
-      date: new Date(Date.now() - (6 - i) * 86400000).toISOString().split('T')[0],
-      tasks: Math.floor(Math.random() * 30) + 15,
-    }));
+    const trends = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (6 - index));
+      const dayKey = date.toISOString().slice(0, 10);
+      const dayTasks = tasks.filter((task) => task.createdAt.toISOString().slice(0, 10) === dayKey);
+      return {
+        date: dayKey,
+        tasks: dayTasks.length,
+        completed: dayTasks.filter((task) => task.status === 'completed').length,
+        failed: dayTasks.filter((task) => task.status === 'failed').length,
+      };
+    });
 
     res.json({
       summary: {
         totalTasks,
+        completed,
+        failed,
+        running,
         successRate,
         agents: agents.length,
       },
       agents,
-      trends: DEMO_MODE ? demoTrends : trends,
+      trends,
     });
-  } catch (err) {
-    console.error('analytics summary error', err);
+  } catch (error) {
+    console.error('analytics summary error', error);
     res.status(500).json({ error: 'failed' });
   }
 });
 
-// GET /analytics/history - simple recent tasks (paginated)
 router.get('/history', async (req, res) => {
   try {
-    const take = parseInt(req.query.limit) || 100;
-    const skip = parseInt(req.query.skip) || 0;
-    const rows = await prisma.agentTask.findMany({ orderBy: { createdAt: 'desc' }, take, skip });
-    res.json(rows);
-  } catch (err) {
-    console.error('analytics history error', err);
+    const take = parseInt(req.query.limit, 10) || 50;
+    const skip = parseInt(req.query.offset ?? req.query.skip, 10) || 0;
+    const rows = await prisma.task.findMany({
+      where: { archived: false },
+      orderBy: { createdAt: 'desc' },
+      take,
+      skip,
+    });
+    res.json(rows.map((row) => ({
+      ...row,
+      result: parseTaskResult(row.result),
+    })));
+  } catch (error) {
+    console.error('analytics history error', error);
     res.status(500).json({ error: 'failed' });
   }
 });
 
-// DELETE /analytics/clear - admin only (placeholder)
 router.delete('/clear', async (req, res) => {
   try {
-    await prisma.agentTask.deleteMany();
-    await prisma.agentEvent.deleteMany();
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('analytics clear error', err);
+    const result = await prisma.task.updateMany({
+      where: { archived: false },
+      data: { archived: true },
+    });
+    res.json({ ok: true, cleared: result.count });
+  } catch (error) {
+    console.error('analytics clear error', error);
     res.status(500).json({ error: 'failed' });
   }
 });

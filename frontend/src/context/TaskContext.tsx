@@ -25,7 +25,7 @@ export function TaskProvider({ children }:{ children: React.ReactNode }){
   const [loading, setLoading] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task|null>(null);
 
-const ws = useWebSocket({ url: process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:5000' as string });
+const ws = useWebSocket();
 
   async function refresh(){
     setLoading(true);

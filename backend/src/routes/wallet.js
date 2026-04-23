@@ -80,7 +80,8 @@ router.get('/balance', optionalAuth, async (req, res) => {
     }
 
     const weiHex = alchemyData.result;
-    const eth = (parseInt(weiHex, 16) / 1e18).toFixed(6);
+    const wei = BigInt(weiHex);
+    const eth = (Number(wei) / 1e18).toFixed(6);
 
     // Get ETH price from CoinGecko (no key needed)
     let ethPrice = 3200;

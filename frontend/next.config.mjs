@@ -1,7 +1,9 @@
+import path from "path";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // No standalone output - we use `next start` directly
   experimental: {},
+  outputFileTracingRoot: path.join(process.cwd(), ".."),
 };
 
 export default nextConfig;

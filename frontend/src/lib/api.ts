@@ -1,82 +1,86 @@
-/**
- * api.ts — Central API client for AgentFinance
- *
- * ROOT CAUSE FIX: NEXT_PUBLIC_API_URL is set to "http://localhost:4000" in Railway.
- * Fix: go to Railway → Frontend service → Variables → change to:
- *   NEXT_PUBLIC_API_URL=https://serene-magic-production-6d0c.up.railway.app
- *   NEXT_PUBLIC_WS_URL=wss://serene-magic-production-6d0c.up.railway.app
- *
- * Until you do that, we hardcode the fallback here.
- */
+const normalizeUrl = (value: string | undefined, fallback: string) => {
+  const raw = (value || '').trim();
+  if (!raw || raw.includes('localhost')) return fallback;
+  return raw.replace(/\/$/, '');
+};
 
-// Always prefer the env var but fallback to the real backend URL
-const RAW = process.env.NEXT_PUBLIC_API_URL || '';
-// If it's localhost (Railway env bug) → use real backend
-export const API_BASE =
-  RAW && !RAW.includes('localhost')
-    ? RAW.replace(/\/$/, '')
-    : 'https://serene-magic-production-6d0c.up.railway.app';
+export const API_BASE = normalizeUrl(
+  process.env.NEXT_PUBLIC_API_URL,
+  'https://serene-magic-production-6d0c.up.railway.app',
+);
 
-export const WS_BASE = (() => {
-  const raw = process.env.NEXT_PUBLIC_WS_URL || '';
-  if (raw && !raw.includes('localhost')) return raw;
-  return 'wss://serene-magic-production-6d0c.up.railway.app';
-})();
+export const WS_BASE = normalizeUrl(
+  process.env.NEXT_PUBLIC_WS_URL,
+  'wss://serene-magic-production-6d0c.up.railway.app',
+);
 
-// ---------- token helpers ----------
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('token');
 }
-export function setToken(t: string) {
-  if (typeof window !== 'undefined') localStorage.setItem('token', t);
+
+export function setToken(token: string) {
+  if (typeof window !== 'undefined') localStorage.setItem('token', token);
 }
+
 export function removeToken() {
-  if (typeof window !== 'undefined') localStorage.removeItem('token');
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('token');
 }
+
 export function isLoggedIn(): boolean {
   return !!getToken();
 }
+
 export function logout() {
   removeToken();
   if (typeof window !== 'undefined') {
     localStorage.removeItem('agentfi_wallet');
     localStorage.removeItem('af_displayName');
     localStorage.removeItem('af_bio');
+    localStorage.removeItem('af_settings');
   }
 }
 
-// ---------- base fetch ----------
-export async function apiFetch(path: string, opts: RequestInit = {}): Promise<any> {
+export async function apiFetch(path: string, options: RequestInit = {}) {
   const token = getToken();
-  const url = `${API_BASE}${path}`;
-  const res = await fetch(url, {
-    ...opts,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(opts.headers || {}),
-    },
+  const headers = new Headers(options.headers || {});
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+
+  if (!isFormData && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    credentials: options.credentials || 'include',
+    headers,
   });
 
-  // Try parse JSON even on error so we can read error messages
-  let data: any;
-  try { data = await res.json(); } catch { data = null; }
-
-  if (!res.ok) {
-    const msg = data?.error || data?.message || `HTTP ${res.status}`;
-    throw new Error(msg);
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
   }
+
+  if (!response.ok) {
+    const message = data?.error || data?.message || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+
   return data;
 }
 
-// ---------- auth ----------
 export async function login(username: string, password: string) {
   const data = await apiFetch('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
   });
-  if (data.token) setToken(data.token);
+  if (data?.token) setToken(data.token);
   return data;
 }
 
@@ -85,84 +89,80 @@ export async function register(username: string, password: string, email?: strin
     method: 'POST',
     body: JSON.stringify({ username, password, email }),
   });
-  if (data.token) setToken(data.token);
+  if (data?.token) setToken(data.token);
   return data;
 }
 
-export async function getMe(): Promise<any> {
+export async function getMe() {
   const data = await apiFetch('/auth/me');
-  // Also load local overrides
   if (typeof window !== 'undefined') {
-    const dn = localStorage.getItem('af_displayName');
-    const b = localStorage.getItem('af_bio');
-    if (dn) data.displayName = dn;
-    if (b) data.bio = b;
-    const w = localStorage.getItem('agentfi_wallet');
-    if (w) data.walletAddress = w;
+    const displayName = localStorage.getItem('af_displayName');
+    const bio = localStorage.getItem('af_bio');
+    if (displayName) data.displayName = displayName;
+    if (bio) data.bio = bio;
   }
   return data;
 }
 
-// ---------- tasks ----------
-export async function getTasks(): Promise<any[]> {
+export async function getRuntimeStatus() {
+  return apiFetch('/system/runtime');
+}
+
+export async function getTasks() {
   const data = await apiFetch('/tasks');
   return Array.isArray(data) ? data : (data?.tasks || []);
 }
 
-export async function createTask(action: string, agentType?: string): Promise<any> {
+export async function createTask(action: string, agentType?: string, agentId?: string) {
   return apiFetch('/tasks', {
     method: 'POST',
-    body: JSON.stringify({ action, agentType }),
+    body: JSON.stringify({ action, agentType, agentId }),
   });
 }
 
-export async function deleteTask(id: string): Promise<any> {
+export async function patchTask(id: string, patch: Record<string, unknown>) {
+  return apiFetch(`/tasks/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteTask(id: string) {
   return apiFetch(`/tasks/${id}`, { method: 'DELETE' });
 }
 
-export async function deleteAllTasks(): Promise<any> {
-  // Try bulk delete endpoint, fallback to individual
-  try {
-    return await apiFetch('/tasks/all', { method: 'DELETE' });
-  } catch {
-    const tasks = await getTasks();
-    await Promise.all(tasks.map(t => deleteTask(t.id).catch(() => {})));
-    return { deleted: tasks.length };
-  }
+export async function deleteAllTasks() {
+  return apiFetch('/tasks/all', { method: 'DELETE' });
 }
 
-// ---------- wallet ----------
-export async function getWalletBalance(address: string): Promise<any> {
-  return apiFetch(`/wallet/balance?address=${address}`);
+export async function getWalletBalance(address: string) {
+  return apiFetch(`/wallet/balance?address=${encodeURIComponent(address)}`);
 }
 
-export async function saveWalletAddress(address: string): Promise<any> {
-  // Try the backend endpoint, fallback to localStorage only
-  try {
-    return await apiFetch('/auth/wallet', {
-      method: 'POST',
-      body: JSON.stringify({ walletAddress: address }),
-    });
-  } catch {
-    if (typeof window !== 'undefined') localStorage.setItem('agentfi_wallet', address);
-    return { success: true, local: true };
-  }
+export async function saveWalletAddress(address: string | null) {
+  return apiFetch('/auth/wallet', {
+    method: 'POST',
+    body: JSON.stringify({ walletAddress: address }),
+  });
 }
-// ---------- analytics ----------
-// Added limit and offset parameters to match your dashboard call
-export async function getAnalyticsHistory(limit = 10, offset = 0): Promise<any[]> {
+
+export async function getAnalyticsHistory(limit = 20, offset = 0) {
   try {
     const data = await apiFetch(`/analytics/history?limit=${limit}&offset=${offset}`);
     return Array.isArray(data) ? data : [];
   } catch {
-    return []; 
+    return [];
   }
 }
 
-export async function getAnalyticsSummary(): Promise<any> {
+export async function getAnalyticsSummary() {
   try {
     return await apiFetch('/analytics/summary');
   } catch {
-    return { totalTasks: 0, activeAgents: 0 }; 
+    return {
+      summary: { totalTasks: 0, completed: 0, failed: 0, running: 0, successRate: 0, agents: 0 },
+      agents: [],
+      trends: [],
+    };
   }
 }
