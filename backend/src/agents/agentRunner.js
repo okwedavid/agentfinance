@@ -6,6 +6,7 @@
  * This prevents rate limits because when one provider hits its limit,
  * it automatically tries the next one.
  */
+import { executeTool as executeStructuredTool } from '../tools/toolExecutor.js';
 
 // ── Provider configs ────────────────────────────────────────────────────────
 const PROVIDERS = [
@@ -136,6 +137,15 @@ const TOOLS = [
     },
   },
 ];
+
+function safeJson(value) {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
 
 // ── Tool executor ────────────────────────────────────────────────────────────
 async function executeTool(name, args) {
@@ -400,6 +410,44 @@ async function callProvider(provider, messages, useTools = false) {
 
 // ── Main agent runner — cascade through all providers ────────────────────────
 export async function runAgent({ action, agentType = 'coordinator', walletAddress = null }) {
+  if (agentType === 'execution') {
+    const actionText = action || '';
+    const routingMatch = actionText.match(/([0-9]+(?:\.[0-9]+)?)\s*ETH/i);
+
+    const liveBalance = walletAddress
+      ? await executeStructuredTool('check_wallet_balance', { wallet_address: walletAddress, tokens: ['ETH'] })
+      : JSON.stringify({ error: 'No wallet connected' });
+
+    if (/route|sweep|transfer|wallet/i.test(actionText)) {
+      const prepared = walletAddress
+        ? await executeStructuredTool('prepare_wallet_transaction', {
+            action: 'transfer',
+            token: 'ETH',
+            amount: routingMatch?.[1] || '0.0000',
+            recipient_address: walletAddress,
+            network: 'ethereum',
+          })
+        : JSON.stringify({ error: 'No wallet connected' });
+
+      const output = JSON.stringify({
+        mode: 'execution-prep',
+        canBroadcast: false,
+        reason: 'No funded treasury wallet or signer is configured on the server, so the platform can prepare but not auto-broadcast an ETH payout.',
+        walletAddress,
+        currentBalance: safeJson(liveBalance),
+        preparedTransaction: safeJson(prepared),
+        nextStep: 'Present this prepared transaction to the user wallet for review and approval, or configure a funded payout wallet with signing infrastructure.',
+      }, null, 2);
+
+      return {
+        success: true,
+        output,
+        provider: 'local-execution-engine',
+        agentType,
+      };
+    }
+  }
+
   const systemPrompts = {
     research: `You are a DeFi and crypto research agent. You have access to real-time market data tools.
 Your job is to find and analyse income-generating opportunities in the crypto/DeFi ecosystem.

@@ -244,7 +244,7 @@ export default function SettingsPage() {
                     </div>
                     {group.title === "Wallet and on-chain" && (
                       <p className="mt-3 text-xs text-slate-500">
-                        The Alchemy help text on the wallet page is not admin-only. Every user can see the hint if balance fetch fails, but no one except admins sees the runtime provider checklist above.
+                        Wallet provider diagnostics are restricted to admins on this page.
                       </p>
                     )}
                   </div>

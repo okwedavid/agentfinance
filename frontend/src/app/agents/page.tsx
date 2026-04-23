@@ -157,11 +157,11 @@ export default function AgentsPage() {
 
           <div className="space-y-5">
             <div className="glass rounded-[28px] p-5">
-              <h2 className="text-lg font-semibold text-white">What changed</h2>
+              <h2 className="text-lg font-semibold text-white">How fleet nodes operate</h2>
               <ul className="mt-3 space-y-2 text-sm text-slate-300">
-                <li>The fleet page now reflects `AGENTS` from the backend runtime.</li>
-                <li>Task launches go through the repaired task route instead of failing on dead backend paths.</li>
-                <li>Socket status in the top bar is now driven by the actual websocket hook state.</li>
+                <li>Each configured node name comes from the backend `AGENTS` environment variable.</li>
+                <li>Tasks are created by the app, classified by intent, then picked up by the queue or inline fallback worker.</li>
+                <li>Execution nodes prepare wallet actions, research nodes scan data, and content nodes format publishable output.</li>
               </ul>
             </div>
 

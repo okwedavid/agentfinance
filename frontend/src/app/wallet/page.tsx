@@ -11,6 +11,7 @@ import {
   isLoggedIn,
   saveWalletAddress,
 } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 const CHAINS = [
   { id: "ethereum", name: "Ethereum", symbol: "ETH", explorer: "https://etherscan.io/address/" },
@@ -19,8 +20,18 @@ const CHAINS = [
   { id: "arbitrum", name: "Arbitrum", symbol: "ETH", explorer: "https://arbiscan.io/address/" },
 ];
 
+function parseResult(value: any) {
+  if (!value) return null;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 export default function WalletPage() {
-  const { connectionStatus } = useWebSocket();
+  const { isAdmin } = useAuth();
   const [wallet, setWallet] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [chain, setChain] = useState(CHAINS[0]);
@@ -29,6 +40,18 @@ export default function WalletPage() {
   const [loadingBalance, setLoadingBalance] = useState(false);
   const [runtime, setRuntime] = useState<any>(null);
   const [tasks, setTasks] = useState<any[]>([]);
+  const [routingBusy, setRoutingBusy] = useState(false);
+
+  const refreshTasks = async () => getTasks().then(setTasks).catch(() => setTasks([]));
+  const refreshRuntime = async () => getRuntimeStatus().then(setRuntime).catch(() => setRuntime(null));
+
+  const onSocketEvent = useMemo(() => async (event: any) => {
+    if (event?.type?.startsWith("task:")) {
+      await refreshTasks();
+    }
+  }, []);
+
+  const { connectionStatus } = useWebSocket({ onEvent: onSocketEvent });
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -43,8 +66,8 @@ export default function WalletPage() {
       void refreshBalance(stored);
     }
 
-    void getRuntimeStatus().then(setRuntime).catch(() => setRuntime(null));
-    void getTasks().then(setTasks).catch(() => setTasks([]));
+    void refreshRuntime();
+    void refreshTasks();
   }, []);
 
   async function refreshBalance(address: string) {
@@ -76,8 +99,7 @@ export default function WalletPage() {
       localStorage.setItem("agentfi_wallet", trimmed);
       setWallet(trimmed);
       setInput(trimmed);
-      await refreshBalance(trimmed);
-      setRuntime((current: any) => ({ ...(current || {}), walletAddress: trimmed }));
+      await Promise.all([refreshBalance(trimmed), refreshRuntime()]);
       flash("Wallet connected.");
     } catch (error: any) {
       flash(error.message || "Could not save wallet.");
@@ -109,7 +131,7 @@ export default function WalletPage() {
     setWallet(null);
     setInput("");
     setBalance(null);
-    setRuntime((current: any) => ({ ...(current || {}), walletAddress: null }));
+    await refreshRuntime();
     flash("Wallet disconnected.");
   }
 
@@ -118,11 +140,18 @@ export default function WalletPage() {
       flash("Connect a wallet first.");
       return;
     }
+    setRoutingBusy(true);
     try {
-      await createTask(`Route agent earnings to wallet ${wallet}`, "execution");
-      flash("Execution task queued.");
+      const completedTasks = tasks.filter((task) => task.status === "completed").length;
+      const amount = (completedTasks * 0.001).toFixed(4);
+      const action = `Prepare routing plan for ${amount} ETH agent earnings to wallet ${wallet} on ${chain.name}. Check live balance first, then prepare the transaction but do not broadcast it.`;
+      await createTask(action, "execution");
+      await refreshTasks();
+      flash("Routing plan queued.");
     } catch (error: any) {
       flash(error.message || "Could not queue the execution task.");
+    } finally {
+      setRoutingBusy(false);
     }
   }
 
@@ -137,6 +166,12 @@ export default function WalletPage() {
     return "Wallet linked and ready";
   }, [wallet, connectionStatus]);
 
+  const latestExecutionTask = useMemo(() => {
+    return tasks.find((task) => /routing plan|route agent earnings|execution/i.test(task.action));
+  }, [tasks]);
+
+  const executionPayload = parseResult(latestExecutionTask?.result);
+
   return (
     <div className="min-h-screen bg-[#050c18] flex flex-col">
       <TopNav wsStatus={connectionStatus} />
@@ -148,7 +183,7 @@ export default function WalletPage() {
               <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">Wallet operations</p>
               <h1 className="mt-2 text-3xl font-bold text-white">Earnings destination</h1>
               <p className="mt-2 max-w-2xl text-sm text-slate-300">
-                Your wallet receives routed earnings from completed agent runs. The “add Alchemy to Railway” hint is visible to any user when live balance checks are unavailable; it is not restricted to admins.
+                Your wallet receives routed earnings from completed agent runs once a real payout source and signer are configured.
               </p>
             </div>
 
@@ -258,8 +293,13 @@ export default function WalletPage() {
                     <div className="mt-2 text-sm text-slate-400">
                       {providerReady
                         ? "The provider is configured, but the request failed. Check the backend logs."
-                        : "Add ALCHEMY_API_KEY to the Railway backend to enable live wallet balance checks."}
+                        : "Live balance checks are currently unavailable."}
                     </div>
+                    {isAdmin && !providerReady && (
+                      <div className="mt-3 text-xs text-amber-200">
+                        Admin note: add `ALCHEMY_API_KEY` in Railway backend variables to restore live balance checks.
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -268,10 +308,14 @@ export default function WalletPage() {
             <div className="glass rounded-[28px] p-5">
               <h2 className="text-lg font-semibold text-white">Route earnings</h2>
               <p className="mt-2 text-sm text-slate-400">
-                Completed agent work creates an execution task that can route value to your linked wallet after review.
+                This now creates a live execution-preparation task that checks balance and prepares a payout transaction plan in real time.
               </p>
-              <button onClick={routeEarnings} className="mt-4 w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300">
-                Queue execution task
+              <button
+                onClick={routeEarnings}
+                disabled={routingBusy}
+                className="mt-4 w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:opacity-60"
+              >
+                {routingBusy ? "Preparing..." : "Prepare routing plan"}
               </button>
               <Link href="/agents" className="mt-3 inline-flex text-sm text-cyan-200 underline-offset-4 hover:underline">
                 Open agent fleet
@@ -279,12 +323,23 @@ export default function WalletPage() {
             </div>
 
             <div className="glass rounded-[28px] p-5">
-              <h2 className="text-lg font-semibold text-white">Who can see what?</h2>
-              <ul className="mt-3 space-y-2 text-sm text-slate-300">
-                <li>Every user can see wallet guidance and balance-error hints on this page.</li>
-                <li>Other users cannot see your saved wallet address from settings unless you expose it in your own UI session.</li>
-                <li>Provider keys themselves are not visible here; only admins can see runtime loaded/missing status in Settings.</li>
-              </ul>
+              <h2 className="text-lg font-semibold text-white">Latest routing task</h2>
+              {!latestExecutionTask ? (
+                <p className="mt-2 text-sm text-slate-400">No routing task has been created yet.</p>
+              ) : (
+                <div className="mt-3 rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs uppercase tracking-[0.2em] text-slate-500">{latestExecutionTask.status}</span>
+                    <span className="text-xs text-slate-500">{new Date(latestExecutionTask.createdAt).toLocaleString()}</span>
+                  </div>
+                  <div className="mt-3 text-sm text-white">{latestExecutionTask.action}</div>
+                  {executionPayload && (
+                    <pre className="mt-4 whitespace-pre-wrap break-words text-xs leading-6 text-slate-300">
+                      {JSON.stringify(executionPayload, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              )}
             </div>
           </section>
         </div>
