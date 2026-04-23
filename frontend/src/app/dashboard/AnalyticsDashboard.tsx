@@ -5,7 +5,7 @@ import MetricCard from "./components/MetricCard";
 import RealtimeLineChart from "./components/RealtimeLineChart";
 import AgentPerformancePanel from "./components/AgentPerformancePanel";
 import DashboardLayout from "./DashboardLayout";
-import useWebSocket from "../../hooks/useWebSocket";
+import {useWebSocket} from "../../hooks/useWebSocket";
 import AnalyticsHistoryPanel from './AnalyticsHistoryPanel';
 //import { WebSocketContext } from "../../context/WebSocketContext";
 
@@ -24,7 +24,7 @@ function formatTime(ts: number) {
 const POLL_INTERVAL = 2000;
 
 const AnalyticsDashboard: React.FC = () => {
-  const { parsedMessages, connectionStatus } = useWebSocket(process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:4001");
+  const { parsedMessages, connectionStatus } = useWebSocket((process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:4001") as any);
   const [metrics, setMetrics] = useState({
     agentsOnline: 0,
     tasksProcessed: 0,
@@ -39,7 +39,7 @@ const AnalyticsDashboard: React.FC = () => {
 
   // WebSocket event handling
   useEffect(() => {
-    setLive(connectionStatus === "connected");
+    setLive(connectionStatus as string === "connected");
     if (parsedMessages.length === 0) return;
     const lastMsg = parsedMessages[parsedMessages.length - 1];
     if (lastMsg.type === "metrics:update") {

@@ -28,7 +28,7 @@ export default function WalletPage() {
   const [balLoad, setBalLoad] = useState(false);
   const [tasks, setTasks]     = useState<any[]>([]);
   const [sweeping, setSweep]  = useState(false);
-  const { status: wsStatus }  = useWebSocket();
+  const { connectionStatus: wsStatus }  = useWebSocket();
 
   function flash(text: string, type: Msg['type'] = 'ok') {
     setMsg({ text, type });

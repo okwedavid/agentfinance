@@ -1,6 +1,6 @@
 "use client";
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import useWebSocket from '../hooks/useWebSocket';
+import {useWebSocket} from '../hooks/useWebSocket';
 import { apiFetch } from '../lib/api';
 
 type Task = { id:string; action:string; status:string; createdAt:string; updatedAt:string; input?:any; result?:any; archived?:boolean };
@@ -25,7 +25,7 @@ export function TaskProvider({ children }:{ children: React.ReactNode }){
   const [loading, setLoading] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task|null>(null);
 
-  const ws = useWebSocket((process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:5000'));
+const ws = useWebSocket({ url: process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:5000' as string });
 
   async function refresh(){
     setLoading(true);

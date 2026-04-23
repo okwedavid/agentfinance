@@ -15,6 +15,7 @@ interface UseWebSocketOptions {
 
 export function useWebSocket({ onEvent }: UseWebSocketOptions = {}) {
   const [status, setStatus] = useState<WsStatus>("connecting");
+  const [parsedMessages, setParsedMessages] = useState<WsEvent[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const mounted = useRef(true);
@@ -72,5 +73,8 @@ export function useWebSocket({ onEvent }: UseWebSocketOptions = {}) {
     };
   }, [connect]);
 
-  return { status };
+  return {
+    parsedMessages,
+    connectionStatus: status,
+  };
 }

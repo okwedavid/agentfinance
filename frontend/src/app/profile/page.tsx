@@ -14,7 +14,7 @@ export default function ProfilePage() {
   const [bio, setBio]           = useState('');
   const [saving, setSaving]     = useState(false);
   const [msg, setMsg]           = useState('');
-  const { status: wsStatus }    = useWebSocket();
+  const { connectionStatus: wsStatus }    = useWebSocket();
 
   useEffect(() => {
     if (!isLoggedIn()) { window.location.href = '/login'; return; }

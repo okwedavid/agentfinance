@@ -134,7 +134,7 @@ export default function AgentsPage() {
   const [launching, setLaunching] = useState<string | null>(null);
   const [successTask, setSuccessTask] = useState<string | null>(null);
   const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
-  const { status: wsStatus } = useWebSocket();
+  const { connectionStatus: wsStatus } = useWebSocket();
 
   useEffect(() => {
     if (!isLoggedIn()) { window.location.href = '/login'; return; }

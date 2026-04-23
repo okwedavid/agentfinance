@@ -205,7 +205,7 @@ export default function DashboardPage() {
     setLiveEvents(p=>[{...evt,ts:Date.now()},...p].slice(0,20));
     if(evt.type?.startsWith('task:')) getTasks().then(setTasks).catch(()=>{});
   },[]);
-  const {status:wsStatus}=useWebSocket({onEvent});
+  const {connectionStatus:wsStatus}=useWebSocket({onEvent});
 
   useEffect(()=>{
     if(!isLoggedIn()){window.location.href='/login';return;}

@@ -1,9 +1,9 @@
 import { apiFetch } from '../lib/api';
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
-import useWsHook from "../hooks/useWebSocket";
+import {useWebSocket as useWebSocketHook} from "../hooks/useWebSocket";
 const WebSocketContext = createContext(null);
 export function WebSocketProvider({ children }) {
-  const { parsedMessages, connectionStatus, sendMessage } = useWsHook(process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:5000");
+  const { parsedMessages, connectionStatus, sendMessage } = useWebSocketHook(process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:5000");
   const [agents, setAgents] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [events, setEvents] = useState([]);

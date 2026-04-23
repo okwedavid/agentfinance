@@ -148,3 +148,21 @@ export async function saveWalletAddress(address: string): Promise<any> {
     return { success: true, local: true };
   }
 }
+// ---------- analytics ----------
+// Added limit and offset parameters to match your dashboard call
+export async function getAnalyticsHistory(limit = 10, offset = 0): Promise<any[]> {
+  try {
+    const data = await apiFetch(`/analytics/history?limit=${limit}&offset=${offset}`);
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return []; 
+  }
+}
+
+export async function getAnalyticsSummary(): Promise<any> {
+  try {
+    return await apiFetch('/analytics/summary');
+  } catch {
+    return { totalTasks: 0, activeAgents: 0 }; 
+  }
+}

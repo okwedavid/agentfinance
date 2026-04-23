@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import useWebSocket from '../hooks/useWebSocket';
+import {useWebSocket} from '../hooks/useWebSocket';
 import { useAuth } from '../context/AuthContext';
 
 const COLORS = ['#6366f1', '#22d3ee', '#10b981', '#f59e42', '#ef4444'];
@@ -8,7 +8,7 @@ const COLORS = ['#6366f1', '#22d3ee', '#10b981', '#f59e42', '#ef4444'];
 const TaskStatsPanel: React.FC = () => {
   const { user } = useAuth();
   const token = typeof window !== 'undefined' ? (document.cookie.match(/token=([^;]+)/)?.[1] || '') : '';
-  const { parsedMessages } = useWebSocket(process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:5000', token);
+  const { parsedMessages } = useWebSocket((process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:5000') as any);
 
   // Aggregate status breakdown from live events
   const statusCounts = useMemo(() => {

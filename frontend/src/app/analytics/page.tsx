@@ -19,7 +19,7 @@ export default function AnalyticsPage() {
   const [tasks, setTasks]     = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [range, setRange]     = useState<7 | 14 | 30>(7);
-  const { status: wsStatus }  = useWebSocket();
+  const { connectionStatus: wsStatus }  = useWebSocket();
 
   useEffect(() => {
     if (!isLoggedIn()) { window.location.href = '/login'; return; }

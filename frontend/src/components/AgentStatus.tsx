@@ -1,14 +1,15 @@
 "use client";
-import React, { useEffect, useState, useContext } from 'react';
-import { AuthContext } from '../context/AuthContext';
-
+import React, { useEffect, useState } from 'react';
+import { getToken } from '@/lib/api';
+import { useAuth } from '../context/AuthContext';
 export default function AgentStatus() {
   const [online, setOnline] = useState<number>(0);
   const [names, setNames] = useState<string[]>([]);
   const [lastMessage, setLastMessage] = useState<string>(""); // For the live text feed
 
-  const context = useContext(AuthContext) as any;
-  const token = context?.token;
+  const authCtx = useAuth();
+  const token = getToken() || authCtx?.token;
+  
 
   // Requirement 2: Text Processing Utility
   const processAgentText = (text: string) => {

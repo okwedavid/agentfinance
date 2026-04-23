@@ -1,11 +1,11 @@
 "use client";
 import React, { useState, useContext } from 'react';
-import { AuthContext } from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 
 export default function LoginForm() {
   const [name, setName] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const { login } = useContext(AuthContext);
+  const { login } = useAuth();
   const [error, setError] = useState<string | null>(null);
 
   async function handleLogin(e: React.FormEvent) {

@@ -121,7 +121,7 @@ export default function SettingsPage() {
   const [tab, setTab] = useState<'agents' | 'apis' | 'danger'>('agents');
   const [clearing, setClearing] = useState(false);
   const [clearMsg, setClearMsg] = useState('');
-  const { status: wsStatus } = useWebSocket();
+  const { connectionStatus: wsStatus } = useWebSocket();
 
   useEffect(() => {
     if (!isLoggedIn()) { window.location.href = '/login'; return; }
@@ -182,11 +182,11 @@ export default function SettingsPage() {
     setTimeout(() => setClearMsg(''), 4000);
   }
 
-  const TABS = [
+  const TABS: { id: 'agents' | 'apis' | 'danger'; label: string; adminOnly?: true }[] = [
     { id: 'agents', label: '🤖 Agents' },
     { id: 'apis',   label: '🔌 APIs',   adminOnly: true },
     { id: 'danger', label: '⚠️ Danger' },
-  ] as const;
+  ];
 
   return (
     <div className="min-h-screen bg-[#050c18] flex flex-col">

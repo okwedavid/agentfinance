@@ -1,11 +1,11 @@
 import React, { useMemo } from 'react';
-import useWebSocket from '../hooks/useWebSocket';
+import {useWebSocket} from '../hooks/useWebSocket';
 import { useAuth } from '../context/AuthContext';
 
 const LogFeed: React.FC = () => {
   const { user } = useAuth();
   const token = typeof window !== 'undefined' ? (document.cookie.match(/token=([^;]+)/)?.[1] || '') : '';
-  const { parsedMessages } = useWebSocket(process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:5000', token);
+  const { parsedMessages } = useWebSocket((process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:5000') as any);
 
   // Show last 50 events
   const logs = useMemo(() => parsedMessages.slice(-50).reverse(), [parsedMessages]);
