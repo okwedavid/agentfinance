@@ -100,11 +100,10 @@ export default function SettingsPage() {
   async function disconnectWallet() {
     if (!confirm("Disconnect your wallet?")) return;
     try {
-      await saveWalletAddress(null);
+      await saveWalletAddress(null, runtime?.preferredNetwork || "ethereum");
     } catch {
-      // Keep local cleanup even if backend is down.
+      // Keep the UI responsive even if the backend is down.
     }
-    localStorage.removeItem("agentfi_wallet");
     setMessage("Wallet disconnected.");
   }
 

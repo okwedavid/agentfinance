@@ -31,7 +31,11 @@ model User {
   id            String   @id @default(cuid())
   username      String   @unique
   passwordHash  String
+  displayName   String?
+  bio           String?
   walletAddress String?
+  walletProfiles Json?
+  preferredNetwork String? @default("ethereum")
   createdAt     DateTime @default(now())
 }
 
@@ -107,4 +111,27 @@ model TokenUsage {
   totalTokens      Int
   costCents        Int
   createdAt        DateTime @default(now())
+}
+
+model Payout {
+  id               String   @id @default(cuid())
+  userId           String
+  taskId           String?
+  network          String
+  assetSymbol      String
+  amount           String
+  recipientAddress String
+  treasuryAddress  String?
+  status           String   @default("draft")
+  summary          String?
+  approvalToken    String?
+  unsignedPayload  Json?
+  signedPayload    Json?
+  txHash           String?
+  error            String?
+  createdAt        DateTime @default(now())
+  approvedAt       DateTime?
+  broadcastAt      DateTime?
+  confirmedAt      DateTime?
+  updatedAt        DateTime @updatedAt
 }

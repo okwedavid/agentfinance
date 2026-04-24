@@ -147,6 +147,14 @@ function safeJson(value) {
   }
 }
 
+function cleanPlainText(value = '') {
+  return String(value)
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
+    .replace(/[_*`#>|[\]{}]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // ── Tool executor ────────────────────────────────────────────────────────────
 async function executeTool(name, args) {
   try {
@@ -439,9 +447,17 @@ export async function runAgent({ action, agentType = 'coordinator', walletAddres
         nextStep: 'Present this prepared transaction to the user wallet for review and approval, or configure a funded payout wallet with signing infrastructure.',
       }, null, 2);
 
+      const readableOutput = [
+        `Execution plan prepared for the connected wallet ${walletAddress || 'not connected'}.`,
+        `Current wallet balance: ${cleanPlainText(typeof liveBalance === 'string' ? liveBalance : JSON.stringify(liveBalance))}.`,
+        `Prepared transaction: ${cleanPlainText(typeof prepared === 'string' ? prepared : JSON.stringify(prepared))}.`,
+        'Next step: review the prepared transaction and approve it in the wallet, or configure a funded payout signer on the server.',
+      ].join('\n');
+
       return {
         success: true,
-        output,
+        output: readableOutput,
+        meta: output,
         provider: 'local-execution-engine',
         agentType,
       };

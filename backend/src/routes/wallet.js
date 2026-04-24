@@ -1,20 +1,12 @@
-/**
- * walletRoutes.js
- * Mount: app.use('/wallet', walletRouter)
- *
- * GET  /wallet/balance?address=0x...    → ETH balance via Alchemy
- * GET  /wallet/tokens?address=0x...     → ERC-20 token balances
- * POST /auth/wallet                     → save wallet address for user
- */
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import prisma from '../prismaClient.js';
+import { JsonRpcProvider, formatEther } from 'ethers';
+import { normalizeNetwork, isValidAddressForNetwork } from '../services/payoutService.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'please_change_me';
 
-// ── Auth middleware ──────────────────────────────────────────────────────────
-function optionalAuth(req, res, next) {
+function optionalAuth(req, _res, next) {
   try {
     const token = req.headers.authorization?.split(' ')[1] || req.cookies?.token;
     if (token) req.user = jwt.verify(token, JWT_SECRET);
@@ -22,117 +14,130 @@ function optionalAuth(req, res, next) {
   next();
 }
 
-function requireAuth(req, res, next) {
-  try {
-    const token = req.headers.authorization?.split(' ')[1] || req.cookies?.token;
-    if (!token) return res.status(401).json({ error: 'unauthenticated' });
-    req.user = jwt.verify(token, JWT_SECRET);
-    next();
-  } catch {
-    return res.status(401).json({ error: 'unauthenticated' });
+function getRpcUrl(networkId) {
+  const alchemy = process.env.ALCHEMY_API_KEY;
+  const ankrValue = process.env.ANKR_RPC_URL || process.env.ANKR_API_KEY;
+  const ankrUrl = ankrValue?.startsWith('http') ? ankrValue : null;
+
+  switch (networkId) {
+    case 'ethereum':
+      return process.env.ETH_RPC_URL
+        || (alchemy ? `https://eth-mainnet.g.alchemy.com/v2/${alchemy}` : null)
+        || (process.env.INFURA_API_KEY ? `https://mainnet.infura.io/v3/${process.env.INFURA_API_KEY}` : null);
+    case 'polygon':
+      return process.env.POLYGON_RPC_URL
+        || (alchemy ? `https://polygon-mainnet.g.alchemy.com/v2/${alchemy}` : null)
+        || 'https://polygon-rpc.com';
+    case 'arbitrum':
+      return process.env.ARBITRUM_RPC_URL
+        || (alchemy ? `https://arb-mainnet.g.alchemy.com/v2/${alchemy}` : null)
+        || 'https://arb1.arbitrum.io/rpc';
+    case 'base':
+      return process.env.BASE_RPC_URL
+        || (alchemy ? `https://base-mainnet.g.alchemy.com/v2/${alchemy}` : null)
+        || 'https://mainnet.base.org';
+    case 'bsc':
+      return process.env.BSC_RPC_URL || ankrUrl || 'https://bsc-dataseed.binance.org';
+    default:
+      return null;
   }
 }
 
-// ── GET /wallet/balance?address=0x... ──────────────────────────────────────
-router.get('/balance', optionalAuth, async (req, res) => {
-  const { address } = req.query;
+async function fetchEvmBalance(address, network) {
+  const rpcUrl = getRpcUrl(network.id);
+  if (!rpcUrl) {
+    throw new Error(`No RPC endpoint is configured for ${network.label}.`);
+  }
 
-  if (!address || typeof address !== 'string') {
+  const provider = new JsonRpcProvider(rpcUrl, network.chainId);
+  const wei = await provider.getBalance(address);
+  const nativeBalance = formatEther(wei);
+  const roundedBalance = Number(nativeBalance).toFixed(6);
+
+  let usdPrice = null;
+  try {
+    const coinId = network.id === 'bsc'
+      ? 'binancecoin'
+      : network.id === 'polygon'
+        ? 'matic-network'
+        : 'ethereum';
+    const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    const priceData = await response.json();
+    usdPrice = priceData?.[coinId]?.usd || null;
+  } catch {}
+
+  return {
+    address,
+    network: network.id,
+    symbol: network.symbol,
+    balance: roundedBalance,
+    usd: usdPrice ? (Number(roundedBalance) * usdPrice).toFixed(2) : null,
+    priceUsd: usdPrice,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+async function fetchBitcoinBalance(address) {
+  const base = (process.env.BTC_API_BASE || 'https://mempool.space/api').replace(/\/$/, '');
+  const response = await fetch(`${base}/address/${address}`, { signal: AbortSignal.timeout(6000) });
+  if (!response.ok) {
+    throw new Error(`Bitcoin balance lookup failed with HTTP ${response.status}.`);
+  }
+
+  const data = await response.json();
+  const funded = data?.chain_stats?.funded_txo_sum || 0;
+  const spent = data?.chain_stats?.spent_txo_sum || 0;
+  const sats = funded - spent;
+  const btc = (sats / 100000000).toFixed(8);
+
+  let usd = null;
+  let priceUsd = null;
+  try {
+    const priceResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd', {
+      signal: AbortSignal.timeout(3000),
+    });
+    const priceData = await priceResponse.json();
+    priceUsd = priceData?.bitcoin?.usd || null;
+    usd = priceUsd ? (Number(btc) * priceUsd).toFixed(2) : null;
+  } catch {}
+
+  return {
+    address,
+    network: 'bitcoin',
+    symbol: 'BTC',
+    balance: btc,
+    usd,
+    priceUsd,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+router.get('/balance', optionalAuth, async (req, res) => {
+  const address = String(req.query.address || '').trim();
+  const network = normalizeNetwork(req.query.network);
+
+  if (!address) {
     return res.status(400).json({ error: 'address query param required' });
   }
-  if (!address.startsWith('0x') || address.length !== 42) {
-    return res.status(400).json({ error: 'invalid Ethereum address' });
-  }
-
-  const ALCHEMY_KEY = process.env.ALCHEMY_API_KEY;
-  if (!ALCHEMY_KEY) {
-    return res.status(503).json({
-      error: 'ALCHEMY_API_KEY not set in Railway backend env vars',
-      eth: '0.000000',
-      usd: '0.00',
-    });
+  if (!isValidAddressForNetwork(address, network)) {
+    return res.status(400).json({ error: `Invalid ${network.label} address.` });
   }
 
   try {
-    // Fetch ETH balance from Alchemy
-    const alchemyRes = await fetch(
-      `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'eth_getBalance',
-          params: [address, 'latest'],
-        }),
-      }
-    );
-
-    if (!alchemyRes.ok) {
-      throw new Error(`Alchemy HTTP ${alchemyRes.status}`);
-    }
-
-    const alchemyData = await alchemyRes.json();
-
-    if (alchemyData.error) {
-      throw new Error(alchemyData.error.message || 'Alchemy error');
-    }
-
-    const weiHex = alchemyData.result;
-    const wei = BigInt(weiHex);
-    const eth = (Number(wei) / 1e18).toFixed(6);
-
-    // Get ETH price from CoinGecko (no key needed)
-    let ethPrice = 3200;
-    try {
-      const priceRes = await fetch(
-        'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
-        { signal: AbortSignal.timeout(3000) }
-      );
-      const priceData = await priceRes.json();
-      ethPrice = priceData?.ethereum?.usd || 3200;
-    } catch {}
-
-    const usd = (parseFloat(eth) * ethPrice).toFixed(2);
-
-    return res.json({ address, eth, usd, ethPrice, timestamp: new Date().toISOString() });
-
-  } catch (err) {
-    console.error('[Wallet] balance error:', err.message);
+    const payload = network.kind === 'btc'
+      ? await fetchBitcoinBalance(address)
+      : await fetchEvmBalance(address, network);
+    return res.json(payload);
+  } catch (error) {
     return res.status(500).json({
-      error: err.message,
-      eth: null,
+      error: error.message,
+      address,
+      network: network.id,
+      balance: null,
       usd: null,
     });
-  }
-});
-
-// ── GET /wallet/tokens?address=0x... ──────────────────────────────────────
-router.get('/tokens', optionalAuth, async (req, res) => {
-  const { address } = req.query;
-  if (!address) return res.status(400).json({ error: 'address required' });
-
-  const ALCHEMY_KEY = process.env.ALCHEMY_API_KEY;
-  if (!ALCHEMY_KEY) return res.status(503).json({ error: 'ALCHEMY_API_KEY not set' });
-
-  try {
-    const r = await fetch(`https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: 1,
-        method: 'alchemy_getTokenBalances',
-        params: [address],
-      }),
-    });
-    const data = await r.json();
-    const tokens = (data.result?.tokenBalances || [])
-      .filter(t => t.tokenBalance !== '0x0000000000000000000000000000000000000000000000000000000000000000')
-      .slice(0, 20);
-    return res.json({ address, tokens });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
   }
 });
 

@@ -1,6 +1,8 @@
 "use client";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   createTask,
   deleteAllTasks,
@@ -30,29 +32,22 @@ function tryParse(value: any) {
   }
 }
 
-function highlightOutput(result: any) {
-  if (!result) return [];
-  const lines = (typeof result === "string" ? result : JSON.stringify(result, null, 2)).split("\n");
-  return lines.map((line, index) => {
-    const tone =
-      /reason|nextStep|recommendation|status|provider|mode|currentBalance|preparedTransaction/i.test(line)
-        ? "text-cyan-100"
-        : /error|failed/i.test(line)
-          ? "text-rose-200"
-          : /wallet|ETH|gas|amount|recipient|timestamp/i.test(line)
-            ? "text-amber-100"
-            : "text-slate-300";
+function sanitizePlainText(value: unknown) {
+  return String(value || "")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, " ")
+    .replace(/[_*`#>|[\]{}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-    const decorated = line
-      .replace(/"(status|reason|nextStep|provider|mode|walletAddress|preparedTransaction|currentBalance)"/g, "[$1]")
-      .replace(/\b(ETH|gas|transfer|wallet|prepared|approval|broadcast)\b/gi, (match) => match.toUpperCase());
-
-    return (
-      <div key={`${index}-${line}`} className={`${tone} font-mono text-sm leading-7 tracking-[0.01em]`}>
-        {decorated}
-      </div>
-    );
-  });
+function extractSummary(task: any) {
+  const parsed = tryParse(task?.result);
+  const raw = parsed?.summary || parsed?.output || parsed?.error || parsed || "";
+  return sanitizePlainText(raw)
+    .replace(/\. /g, ".\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function OutputModal({
@@ -62,53 +57,66 @@ function OutputModal({
   task: any;
   onClose: () => void;
 }) {
-  const parsed = tryParse(task?.result);
-  const summary = typeof parsed === "object" && parsed ? parsed.summary || parsed.output || parsed.error : parsed;
+  const lines = extractSummary(task);
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xl" onClick={onClose} />
-      <div className="relative max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(9,19,34,0.98),rgba(5,12,24,0.98))] shadow-[0_24px_120px_rgba(0,0,0,0.55)] animate-scale-in">
-        <div className="border-b border-white/8 px-6 py-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.28em] text-cyan-200/70">Review output</p>
-              <h3 className="mt-2 text-2xl font-semibold text-white">{task.action}</h3>
-              <p className="mt-2 text-sm text-slate-400">
-                {task.status} · {new Date(task.createdAt).toLocaleString()}
-              </p>
-            </div>
-            <button onClick={onClose} className="rounded-2xl border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:bg-white/5 hover:text-white">
-              Close
-            </button>
-          </div>
-        </div>
-
-        <div className="max-h-[calc(85vh-140px)] overflow-auto px-6 py-6">
-          {summary ? (
-            <div className="space-y-4">
-              <div className="rounded-[28px] border border-cyan-300/10 bg-cyan-400/[0.06] p-5">
-                <div className="text-xs uppercase tracking-[0.22em] text-cyan-200/70">Response</div>
-                <div className="mt-4 space-y-2">{highlightOutput(summary)}</div>
+    <AnimatePresence>
+      <motion.div
+        className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+      >
+        <motion.div className="absolute inset-0 bg-slate-950/82 backdrop-blur-xl" onClick={onClose} />
+        <motion.div
+          initial={{ opacity: 0, y: 24, scale: 0.96 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 18, scale: 0.98 }}
+          transition={{ duration: 0.24 }}
+          className="relative max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-[34px] border border-white/10 bg-[linear-gradient(180deg,rgba(9,19,34,0.98),rgba(5,12,24,0.98))] shadow-[0_24px_120px_rgba(0,0,0,0.58)]"
+        >
+          <div className="border-b border-white/8 px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.28em] text-cyan-200/70">Task summary</p>
+                <h3 className="mt-2 text-2xl font-semibold leading-tight text-white">{task.action}</h3>
+                <p className="mt-2 text-sm text-slate-400">
+                  {task.status} at {new Date(task.createdAt).toLocaleString()}
+                </p>
               </div>
+              <button onClick={onClose} className="rounded-2xl border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:bg-white/5 hover:text-white">
+                Close
+              </button>
+            </div>
+          </div>
 
-              {typeof parsed === "object" && parsed && (
-                <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
-                  <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Structured payload</div>
-                  <pre className="mt-4 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300">
-                    {JSON.stringify(parsed, null, 2)}
-                  </pre>
+          <div className="max-h-[calc(88vh-140px)] overflow-auto px-6 py-6">
+            {lines.length > 0 ? (
+              <div className="rounded-[28px] border border-cyan-300/10 bg-cyan-400/[0.06] p-5">
+                <div className="text-xs uppercase tracking-[0.22em] text-cyan-200/70">Readable response</div>
+                <div className="mt-4 space-y-3">
+                  {lines.map((line, index) => (
+                    <motion.p
+                      key={`${task.id}-${index}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.04 * index, duration: 0.2 }}
+                      className="text-[15px] leading-8 text-slate-100"
+                    >
+                      {line}
+                    </motion.p>
+                  ))}
                 </div>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5 text-slate-400">
-              This task has no output yet.
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+              </div>
+            ) : (
+              <div className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5 text-slate-400">
+                This task has no readable output yet.
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   );
 }
 
@@ -121,11 +129,13 @@ function TaskCard({
   onDelete: (id: string) => Promise<void>;
   onReview: (task: any) => void;
 }) {
-  const parsed = tryParse(task.result);
-  const hasOutput = parsed && (typeof parsed !== "object" || Object.keys(parsed).length > 0);
+  const hasOutput = extractSummary(task).length > 0;
 
   return (
-    <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4 transition hover:border-white/15">
+    <motion.div
+      layout
+      className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4 transition hover:border-white/15"
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -140,7 +150,7 @@ function TaskCard({
             }`} />
             <span className="text-xs uppercase tracking-[0.2em] text-slate-500">{task.status}</span>
           </div>
-          <p className="mt-3 text-sm font-medium leading-6 text-white">{task.action}</p>
+          <p className="mt-3 text-sm font-medium leading-7 text-white">{task.action}</p>
           <p className="mt-2 text-xs text-slate-500">{new Date(task.createdAt).toLocaleString()}</p>
         </div>
 
@@ -155,13 +165,13 @@ function TaskCard({
           disabled={!hasOutput}
           className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Review output
+          Show summary
         </button>
         <span className="text-xs text-slate-500">
-          {hasOutput ? "Opens in a focused viewer." : "No response available yet."}
+          {hasOutput ? "Opens in a focused reader." : "No response available yet."}
         </span>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -223,7 +233,7 @@ export default function DashboardPage() {
     try {
       const result = await deleteAllTasks();
       setTasks([]);
-      setMessage(`Archived ${result?.deleted ?? 0} task(s).`);
+      setMessage(`Archived ${result?.deleted ?? 0} task records.`);
     } catch (error: any) {
       setMessage(error.message || "Could not clear history.");
     }
@@ -242,22 +252,27 @@ export default function DashboardPage() {
     };
   }, [tasks]);
 
-  const recentTasks = showAllRecent ? tasks.slice(0, 8) : tasks.slice(0, 3);
+  const recentTasks = showAllRecent ? tasks.slice(0, 10) : tasks.slice(0, 3);
 
   return (
     <div className="min-h-screen bg-[#050c18] flex flex-col">
       <TopNav wsStatus={connectionStatus} />
 
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-5 px-4 py-6 pb-24 md:pb-6 page-enter">
-        <section className="mesh-panel glass-heavy rounded-[28px] p-6">
+        <motion.section
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+          className="mesh-panel glass-heavy rounded-[28px] p-6"
+        >
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">Mission control</p>
               <h1 className="mt-2 text-3xl font-bold text-white">
                 Welcome back, {user?.displayName || user?.username || "operator"}
               </h1>
-              <p className="mt-2 max-w-2xl text-sm text-slate-300">
-                The dashboard now surfaces runtime readiness, fleet capacity, wallet state, and live task health in one place instead of only showing task history.
+              <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-300">
+                This dashboard keeps fleet readiness, wallet state, and the latest task summaries in one responsive control surface.
               </p>
             </div>
 
@@ -275,21 +290,30 @@ export default function DashboardPage() {
                 <div className="mt-2 text-lg font-semibold text-white">{runtime?.fleet?.length || 0}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Est. earnings</div>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Estimated earnings</div>
                 <div className="mt-2 text-lg font-semibold text-white">{stats.earnings} ETH</div>
               </div>
             </div>
           </div>
-        </section>
+        </motion.section>
 
         {message && (
-          <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100"
+          >
             {message}
-          </div>
+          </motion.div>
         )}
 
-        <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-          <section className="glass rounded-[28px] p-5">
+        <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05, duration: 0.35 }}
+            className="glass rounded-[28px] p-5"
+          >
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-white">Quick deploy</h2>
               <Link href="/agents" className="text-sm text-cyan-200 transition hover:text-white">
@@ -306,8 +330,8 @@ export default function DashboardPage() {
                   className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4 text-left transition hover:-translate-y-0.5 hover:border-cyan-300/20"
                 >
                   <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Playbook {index + 1}</div>
-                  <div className="mt-3 text-sm leading-6 text-white">{template}</div>
-                  <div className="mt-4 text-sm text-cyan-200">{creating === template ? "Launching..." : "Launch task"}</div>
+                  <div className="mt-3 text-sm leading-7 text-white">{template}</div>
+                  <div className="mt-4 text-sm text-cyan-200">{creating === template ? "Launching task" : "Launch task"}</div>
                 </button>
               ))}
             </div>
@@ -325,10 +349,15 @@ export default function DashboardPage() {
                 Deploy custom task
               </button>
             </div>
-          </section>
+          </motion.section>
 
-          <section className="space-y-5">
-            <div className="glass rounded-[28px] p-5">
+          <div className="space-y-5">
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1, duration: 0.35 }}
+              className="glass rounded-[28px] p-5"
+            >
               <h2 className="text-lg font-semibold text-white">Runtime readiness</h2>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
@@ -341,18 +370,21 @@ export default function DashboardPage() {
                 </div>
                 <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
                   <div className="text-xs uppercase tracking-[0.2em] text-slate-500">AI providers</div>
-                  <div className="mt-2 text-base font-semibold text-white">
-                    {runtime?.providerCount ?? 0} loaded
-                  </div>
+                  <div className="mt-2 text-base font-semibold text-white">{runtime?.providerCount ?? 0} loaded</div>
                 </div>
                 <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
-                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Queue mode</div>
-                  <div className="mt-2 text-base font-semibold text-white">{runtime?.queueEnabled ? "BullMQ" : "Inline fallback"}</div>
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Payout signer</div>
+                  <div className="mt-2 text-base font-semibold text-white">{runtime?.payoutRuntime?.treasury?.evmReady ? "Ready" : "Needs setup"}</div>
                 </div>
               </div>
-            </div>
+            </motion.section>
 
-            <div className="glass rounded-[28px] p-5">
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15, duration: 0.35 }}
+              className="glass rounded-[28px] p-5"
+            >
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold text-white">Review lane</h2>
                 <div className="flex items-center gap-3">
@@ -366,10 +398,11 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
+
               <div className="mt-4 space-y-3">
                 {recentTasks.length === 0 ? (
                   <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-5 text-sm text-slate-400">
-                    No tasks yet. Launch a playbook to see live fleet activity.
+                    No tasks yet. Launch a playbook to start the fleet.
                   </div>
                 ) : (
                   recentTasks.map((task) => (
@@ -377,8 +410,8 @@ export default function DashboardPage() {
                   ))
                 )}
               </div>
-            </div>
-          </section>
+            </motion.section>
+          </div>
         </div>
       </main>
 

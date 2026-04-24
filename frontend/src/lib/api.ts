@@ -36,8 +36,6 @@ export function logout() {
   removeToken();
   if (typeof window !== 'undefined') {
     localStorage.removeItem('agentfi_wallet');
-    localStorage.removeItem('af_displayName');
-    localStorage.removeItem('af_bio');
     localStorage.removeItem('af_settings');
   }
 }
@@ -94,14 +92,7 @@ export async function register(username: string, password: string, email?: strin
 }
 
 export async function getMe() {
-  const data = await apiFetch('/auth/me');
-  if (typeof window !== 'undefined') {
-    const displayName = localStorage.getItem('af_displayName');
-    const bio = localStorage.getItem('af_bio');
-    if (displayName) data.displayName = displayName;
-    if (bio) data.bio = bio;
-  }
-  return data;
+  return apiFetch('/auth/me');
 }
 
 export async function getRuntimeStatus() {
@@ -136,14 +127,56 @@ export async function deleteAllTasks() {
 }
 
 export async function getWalletBalance(address: string) {
-  return apiFetch(`/wallet/balance?address=${encodeURIComponent(address)}`);
+  return getWalletBalanceForNetwork(address, 'ethereum');
 }
 
-export async function saveWalletAddress(address: string | null) {
+export async function getWalletBalanceForNetwork(address: string, network: string) {
+  return apiFetch(`/wallet/balance?address=${encodeURIComponent(address)}&network=${encodeURIComponent(network)}`);
+}
+
+export async function saveWalletAddress(address: string | null, network = 'ethereum') {
   return apiFetch('/auth/wallet', {
     method: 'POST',
-    body: JSON.stringify({ walletAddress: address }),
+    body: JSON.stringify({ walletAddress: address, network }),
   });
+}
+
+export async function updateProfile(profile: {
+  displayName?: string;
+  bio?: string;
+  preferredNetwork?: string;
+}) {
+  return apiFetch('/auth/me', {
+    method: 'PATCH',
+    body: JSON.stringify(profile),
+  });
+}
+
+export async function preparePayout(input: {
+  action: string;
+  amount: number | string;
+  network: string;
+  recipientAddress?: string | null;
+}) {
+  return apiFetch('/payouts/prepare', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getPayouts() {
+  const data = await apiFetch('/payouts');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function approvePayout(payoutId: string) {
+  return apiFetch(`/payouts/${payoutId}/approve`, {
+    method: 'POST',
+  });
+}
+
+export async function refreshPayoutStatus(payoutId: string) {
+  return apiFetch(`/payouts/${payoutId}/status`);
 }
 
 export async function getAnalyticsHistory(limit = 20, offset = 0) {

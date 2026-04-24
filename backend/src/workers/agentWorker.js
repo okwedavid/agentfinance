@@ -9,6 +9,7 @@ import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import prisma from '../prismaClient.js';
 import runAgent from '../agents/agentRunner.js';
+import { summariseTaskResult } from '../services/payoutService.js';
 
 const REDIS_URL = process.env.REDIS_URL;
 
@@ -51,7 +52,8 @@ if (!REDIS_URL || REDIS_URL.includes('{{')) {
       const ownerId = task?.userId || userId;
       if (ownerId) {
         const user = await prisma.user.findUnique({ where: { id: ownerId } });
-        walletAddress = user?.walletAddress || null;
+        const profiles = user?.walletProfiles && typeof user.walletProfiles === 'object' ? user.walletProfiles : {};
+        walletAddress = profiles?.[user?.preferredNetwork || 'ethereum'] || user?.walletAddress || null;
       }
     } catch {}
 
@@ -66,7 +68,7 @@ if (!REDIS_URL || REDIS_URL.includes('{{')) {
           completedAt: new Date(),
           result: JSON.stringify({
             output: result.output,
-            summary: result.output?.slice(0, 300),
+            summary: summariseTaskResult(result.output).slice(0, 1200),
             provider: result.provider,
             agentType: result.agentType,
           }),

@@ -1,217 +1,325 @@
 "use client";
-import { useEffect, useState } from "react";
-import { useAuth } from "@/context/AuthContext";
-import { isLoggedIn, getTasks, API_BASE, getToken } from "@/lib/api";
-import { useWebSocket } from "@/hooks/useWebSocket";
-import { TopNav, BottomNav, PageFooter } from "@/components/layout/Nav";
+
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import Link from "next/link";
+import { BottomNav, PageFooter, TopNav } from "@/components/layout/Nav";
+import { useAuth } from "@/context/AuthContext";
+import { getPayouts, getRuntimeStatus, getTasks, isLoggedIn, updateProfile } from "@/lib/api";
+import { useWebSocket } from "@/hooks/useWebSocket";
+
+function sanitizePlainText(value: unknown) {
+  return String(value || "")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const NETWORK_LABELS: Record<string, string> = {
+  ethereum: "Ethereum",
+  polygon: "Polygon",
+  base: "Base",
+  arbitrum: "Arbitrum",
+  bsc: "BNB Smart Chain",
+  bitcoin: "Bitcoin",
+};
 
 export default function ProfilePage() {
   const { user, refresh } = useAuth();
-  const [tasks, setTasks]       = useState<any[]>([]);
-  const [editing, setEditing]   = useState(false);
-  const [displayName, setDN]    = useState('');
-  const [bio, setBio]           = useState('');
-  const [saving, setSaving]     = useState(false);
-  const [msg, setMsg]           = useState('');
-  const { connectionStatus: wsStatus }    = useWebSocket();
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [payouts, setPayouts] = useState<any[]>([]);
+  const [runtime, setRuntime] = useState<any>(null);
+  const [editing, setEditing] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [bio, setBio] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const { connectionStatus } = useWebSocket();
 
   useEffect(() => {
-    if (!isLoggedIn()) { window.location.href = '/login'; return; }
-    getTasks().then(setTasks).catch(() => {});
-    setDN(localStorage.getItem('af_displayName') || user?.displayName || user?.username || '');
-    setBio(localStorage.getItem('af_bio') || user?.bio || '');
-  }, [user]);
+    if (!isLoggedIn()) {
+      window.location.href = "/login";
+      return;
+    }
 
-  async function save() {
+    void Promise.all([
+      getTasks().then(setTasks).catch(() => setTasks([])),
+      getPayouts().then(setPayouts).catch(() => setPayouts([])),
+      getRuntimeStatus().then(setRuntime).catch(() => setRuntime(null)),
+      refresh(),
+    ]);
+  }, []);
+
+  useEffect(() => {
+    setDisplayName(user?.displayName || user?.username || "");
+    setBio(user?.bio || "");
+  }, [user?.displayName, user?.bio, user?.username]);
+
+  async function saveProfile() {
     setSaving(true);
-    localStorage.setItem('af_displayName', displayName);
-    localStorage.setItem('af_bio', bio);
-    // Try backend patch
     try {
-      await fetch(`${API_BASE}/auth/me`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-        body: JSON.stringify({ displayName, bio }),
+      await updateProfile({
+        displayName,
+        bio,
+        preferredNetwork: user?.preferredNetwork || runtime?.preferredNetwork || "ethereum",
       });
-    } catch {}
-    await refresh();
-    setSaving(false); setEditing(false);
-    setMsg('✅ Profile saved');
-    setTimeout(() => setMsg(''), 3000);
+      await refresh();
+      setEditing(false);
+      setMessage("Profile saved.");
+    } catch (error: any) {
+      setMessage(error.message || "Could not save profile.");
+    } finally {
+      setSaving(false);
+      window.setTimeout(() => setMessage(""), 3000);
+    }
   }
 
-  const completed = tasks.filter(t => t.status === 'completed').length;
-  const failed    = tasks.filter(t => t.status === 'failed').length;
-  const rate      = tasks.length > 0 ? Math.round(completed / tasks.length * 100) : 0;
-  const wallet    = typeof window !== 'undefined' ? localStorage.getItem('agentfi_wallet') : null;
-  const initials  = (displayName || user?.username || 'U').slice(0, 2).toUpperCase();
-  const earnings  = (completed * 0.0035).toFixed(4);
+  const completed = tasks.filter((task) => task.status === "completed").length;
+  const failed = tasks.filter((task) => task.status === "failed").length;
+  const running = tasks.filter((task) => task.status === "running").length;
+  const successRate = tasks.length > 0 ? Math.round((completed / tasks.length) * 100) : 0;
+  const earnings = (completed * 0.0035).toFixed(4);
+
+  const walletProfiles = (user?.walletProfiles || runtime?.walletProfiles || {}) as Record<string, string>;
+  const latestPayout = payouts[0];
+
+  const headlineCards = useMemo(
+    () => [
+      { label: "Total tasks", value: String(tasks.length) },
+      { label: "Completed", value: String(completed) },
+      { label: "Success rate", value: `${successRate}%` },
+      { label: "Estimated earned", value: `${earnings} ETH` },
+    ],
+    [completed, earnings, successRate, tasks.length],
+  );
 
   return (
     <div className="min-h-screen bg-[#050c18] flex flex-col">
-      <TopNav wsStatus={wsStatus} />
+      <TopNav wsStatus={connectionStatus} />
 
-      <main className="flex-1 max-w-3xl mx-auto w-full px-4 py-6 pb-24 md:pb-6 space-y-4 page-enter">
-
-        <div>
-          <h1 className="text-xl font-bold text-white">Profile</h1>
-          <p className="text-gray-400 text-sm">Manage your identity and view agent history</p>
-        </div>
-
-        {/* Profile hero card */}
-        <div className="glass rounded-2xl p-6 animate-fade-in">
-          <div className="flex items-start gap-5">
-            {/* Avatar */}
-            <div className="relative flex-shrink-0">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-2xl font-black animate-glow">
-                {initials}
-              </div>
-              <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full border-2 border-[#050c18] flex items-center justify-center">
-                <div className="w-2 h-2 bg-white rounded-full" />
-              </div>
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 px-4 py-6 pb-24 md:pb-6 page-enter">
+        <motion.section
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+          className="mesh-panel glass-heavy rounded-[28px] p-6"
+        >
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-2xl">
+              <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">Profile</p>
+              <h1 className="mt-2 text-3xl font-bold text-white">{user?.displayName || user?.username || "Operator"}</h1>
+              <p className="mt-2 text-sm leading-7 text-slate-300">
+                Manage your identity, review your routing setup, and track the live state of your account across devices.
+              </p>
             </div>
 
-            <div className="flex-1 min-w-0">
-              {editing ? (
-                <div className="space-y-3 animate-fade-in">
-                  <input value={displayName} onChange={e => setDN(e.target.value)}
-                    placeholder="Display name" className="input-field" autoFocus />
-                  <textarea value={bio} onChange={e => setBio(e.target.value)}
-                    placeholder="Short bio about yourself…" rows={2}
-                    className="input-field resize-none" />
-                  <div className="flex gap-2">
-                    <button onClick={save} disabled={saving} className="btn-primary">
-                      {saving
-                        ? <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Saving…</>
-                        : 'Save profile'}
-                    </button>
-                    <button onClick={() => setEditing(false)} className="btn-ghost">Cancel</button>
-                  </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {headlineCards.map((card) => (
+                <div key={card.label} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">{card.label}</div>
+                  <div className="mt-2 text-lg font-semibold text-white">{card.value}</div>
                 </div>
-              ) : (
-                <div className="animate-fade-in">
-                  <div className="flex items-center gap-3 mb-1">
-                    <h2 className="text-xl font-bold text-white">{displayName || user?.username || 'Agent'}</h2>
-                    <button onClick={() => setEditing(true)}
-                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors border border-blue-500/25 px-2 py-0.5 rounded-lg">
-                      Edit
-                    </button>
-                  </div>
-                  <p className="text-gray-500 text-sm mb-2">@{user?.username}</p>
-                  {bio && <p className="text-gray-300 text-sm leading-relaxed">{bio}</p>}
-                  {wallet && (
-                    <p className="text-gray-600 text-xs font-mono mt-2 truncate">
-                      {wallet.slice(0, 6)}…{wallet.slice(-4)}
-                    </p>
-                  )}
-                </div>
-              )}
-              {msg && <p className="text-emerald-400 text-sm mt-2 animate-fade-in">{msg}</p>}
+              ))}
             </div>
           </div>
-        </div>
+        </motion.section>
 
-        {/* Stats grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 stagger-children">
-          {[
-            { icon: '📋', label: 'Total Tasks',  value: tasks.length,      color: 'text-white' },
-            { icon: '✅', label: 'Completed',    value: completed,          color: 'text-emerald-400' },
-            { icon: '🎯', label: 'Success Rate', value: `${rate}%`,         color: 'text-blue-400' },
-            { icon: '💰', label: 'Est. Earned',  value: `${earnings} ETH`, color: 'text-amber-400' },
-          ].map((s, i) => (
-            <div key={s.label}
-              className="glass rounded-xl p-4 animate-fade-in card-glow"
-              style={{ animationDelay: `${i * 60}ms` }}>
-              <div className="text-2xl mb-3">{s.icon}</div>
-              <p className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</p>
-              <p className="text-gray-500 text-xs mt-0.5">{s.label}</p>
+        {message && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100"
+          >
+            {message}
+          </motion.div>
+        )}
+
+        <div className="grid gap-5 xl:grid-cols-[1fr_1fr]">
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05, duration: 0.35 }}
+            className="glass rounded-[28px] p-5"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Identity</h2>
+                <p className="mt-1 text-sm text-slate-400">This profile is stored on the backend and follows your login session.</p>
+              </div>
+              {!editing && (
+                <button onClick={() => setEditing(true)} className="rounded-2xl border border-white/10 px-4 py-3 text-sm text-slate-200 transition hover:bg-white/5">
+                  Edit
+                </button>
+              )}
             </div>
-          ))}
+
+            {editing ? (
+              <div className="mt-4 space-y-3">
+                <input
+                  value={displayName}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  placeholder="Display name"
+                  className="input-field"
+                  autoFocus
+                />
+                <textarea
+                  value={bio}
+                  onChange={(event) => setBio(event.target.value)}
+                  rows={4}
+                  placeholder="Write a short profile bio."
+                  className="input-field resize-none"
+                />
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <button onClick={saveProfile} disabled={saving} className="rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:opacity-60">
+                    {saving ? "Saving profile" : "Save profile"}
+                  </button>
+                  <button onClick={() => setEditing(false)} className="rounded-2xl border border-white/10 px-4 py-3 text-sm text-slate-200 transition hover:bg-white/5">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                <div className="text-sm font-semibold text-white">{user?.displayName || user?.username}</div>
+                <div className="mt-2 text-sm text-slate-400">@{user?.username}</div>
+                <div className="mt-4 text-sm leading-7 text-slate-200">
+                  {user?.bio ? sanitizePlainText(user.bio) : "Add a short bio to personalize the account."}
+                </div>
+              </div>
+            )}
+          </motion.section>
+
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1, duration: 0.35 }}
+            className="glass rounded-[28px] p-5"
+          >
+            <h2 className="text-lg font-semibold text-white">Routing setup</h2>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Preferred network</div>
+                <div className="mt-2 text-sm font-semibold text-white">{NETWORK_LABELS[user?.preferredNetwork || runtime?.preferredNetwork || "ethereum"] || "Ethereum"}</div>
+              </div>
+              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Saved addresses</div>
+                <div className="mt-3 space-y-3">
+                  {Object.keys(walletProfiles).length === 0 ? (
+                    <div className="text-sm text-slate-400">No network wallet has been saved yet.</div>
+                  ) : (
+                    Object.entries(walletProfiles).map(([network, address]) => (
+                      <div key={network} className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
+                        <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{NETWORK_LABELS[network] || network}</div>
+                        <div className="mt-2 break-all text-sm leading-7 text-white">{address}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              <Link href="/wallet" className="inline-flex rounded-2xl border border-white/10 px-4 py-3 text-sm text-slate-200 transition hover:bg-white/5">
+                Open wallet center
+              </Link>
+            </div>
+          </motion.section>
         </div>
 
-        {/* Recent task activity */}
-        <div className="glass rounded-2xl overflow-hidden animate-fade-in">
-          <div className="px-5 py-4 border-b border-white/[0.06] flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">Recent Activity</h2>
-            <Link href="/analytics" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-              View all →
-            </Link>
+        <div className="grid gap-5 xl:grid-cols-[1fr_1fr]">
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15, duration: 0.35 }}
+            className="glass rounded-[28px] p-5"
+          >
+            <h2 className="text-lg font-semibold text-white">Payout readiness</h2>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Socket status</div>
+                <div className="mt-2 text-sm font-semibold text-white">{connectionStatus}</div>
+              </div>
+              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">EVM signer</div>
+                <div className="mt-2 text-sm font-semibold text-white">
+                  {runtime?.payoutRuntime?.treasury?.evmReady ? "Ready" : "Needs setup"}
+                </div>
+              </div>
+              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Bitcoin signer</div>
+                <div className="mt-2 text-sm font-semibold text-white">
+                  {runtime?.payoutRuntime?.treasury?.btcReady ? "Ready" : "Needs setup"}
+                </div>
+              </div>
+              <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Current issue</div>
+                <div className="mt-2 text-sm leading-7 text-slate-300">
+                  {runtime?.payoutRuntime?.treasury?.issue || "No blocking payout issue is currently reported."}
+                </div>
+              </div>
+            </div>
+          </motion.section>
+
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.35 }}
+            className="glass rounded-[28px] p-5"
+          >
+            <h2 className="text-lg font-semibold text-white">Latest payout</h2>
+            {!latestPayout ? (
+              <p className="mt-2 text-sm text-slate-400">No payout has been prepared yet.</p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Status</div>
+                  <div className="mt-2 text-sm font-semibold text-white">{latestPayout.status}</div>
+                </div>
+                <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Summary</div>
+                  <div className="mt-3 space-y-2">
+                    {sanitizePlainText(latestPayout.summary || "")
+                      .replace(/\. /g, ".\n")
+                      .split("\n")
+                      .map((line) => line.trim())
+                      .filter(Boolean)
+                      .map((line, index) => (
+                        <p key={`${latestPayout.id}-${index}`} className="text-sm leading-7 text-slate-200">
+                          {line}
+                        </p>
+                      ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.section>
+        </div>
+
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25, duration: 0.35 }}
+          className="glass rounded-[28px] overflow-hidden"
+        >
+          <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+            <h2 className="text-lg font-semibold text-white">Recent activity</h2>
+            <div className="text-sm text-slate-400">
+              {completed} completed, {running} running, {failed} failed
+            </div>
           </div>
           <div className="divide-y divide-white/[0.04]">
             {tasks.length === 0 ? (
-              <div className="p-8 text-center">
-                <div className="text-3xl mb-2 animate-float">🤖</div>
-                <p className="text-gray-500 text-sm">No tasks yet.</p>
-                <Link href="/dashboard" className="text-blue-400 text-sm hover:text-blue-300">
-                  Deploy your first agent →
-                </Link>
-              </div>
-            ) : tasks.slice(0, 8).map(t => (
-              <div key={t.id} className="flex items-center gap-3 px-5 py-3 hover:bg-white/[0.02] transition-colors">
-                <span className="text-base flex-shrink-0">
-                  {t.status === 'completed' ? '✅' : t.status === 'failed' ? '❌' : t.status === 'running' ? '⚡' : '⏳'}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-white/80 text-sm truncate">{t.action}</p>
-                  <p className="text-gray-600 text-xs">
-                    {new Date(t.createdAt || Date.now()).toLocaleDateString('en-US', {
-                      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                    })}
-                  </p>
+              <div className="p-8 text-sm text-slate-400">No activity yet. Launch a task from the dashboard to start the fleet.</div>
+            ) : (
+              tasks.slice(0, 8).map((task) => (
+                <div key={task.id} className="flex flex-col gap-2 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm leading-7 text-white">{sanitizePlainText(task.action)}</p>
+                    <p className="text-xs text-slate-500">{new Date(task.createdAt || Date.now()).toLocaleString()}</p>
+                  </div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{task.status}</div>
                 </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${
-                  t.status === 'completed' ? 'badge-completed' :
-                  t.status === 'failed'    ? 'badge-failed' :
-                  t.status === 'running'   ? 'badge-running' : 'badge-pending'
-                }`}>{t.status}</span>
-              </div>
-            ))}
+              ))
+            )}
           </div>
-        </div>
-
-        {/* Wallet status */}
-        <div className="glass rounded-2xl p-5 animate-fade-in">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-white">Wallet</h2>
-            <Link href="/wallet" className="text-xs text-blue-400 hover:text-blue-300">Manage →</Link>
-          </div>
-          {wallet ? (
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/15 flex items-center justify-center text-emerald-400">💳</div>
-              <div className="flex-1 min-w-0">
-                <p className="text-white text-sm font-mono truncate">{wallet}</p>
-                <p className="text-emerald-400 text-xs flex items-center gap-1 mt-0.5">
-                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse inline-block" />
-                  Connected · earnings route here
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-amber-400 text-sm">⚠️ No wallet connected</p>
-              <Link href="/wallet" className="btn-primary text-xs py-2">Connect →</Link>
-            </div>
-          )}
-        </div>
-
-        {/* Agent capability badges */}
-        <div className="glass rounded-2xl p-5 animate-fade-in">
-          <h2 className="text-sm font-semibold text-white mb-3">Agent Access</h2>
-          <div className="flex flex-wrap gap-2">
-            {['🔬 Research','📈 Trading','✍️ Content','⚡ Execution'].map(a => (
-              <div key={a} className="flex items-center gap-1.5 text-xs bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-1.5 text-blue-300">
-                {a}
-              </div>
-            ))}
-            {['📱 Social (soon)','🛡️ Security (soon)'].map(a => (
-              <div key={a} className="flex items-center gap-1.5 text-xs bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-1.5 text-gray-500">
-                {a}
-              </div>
-            ))}
-          </div>
-        </div>
-
+        </motion.section>
       </main>
 
       <PageFooter />

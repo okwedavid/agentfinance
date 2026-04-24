@@ -16,6 +16,8 @@ interface User {
   email?: string;
   bio?: string;
   walletAddress?: string | null;
+  walletProfiles?: Record<string, string>;
+  preferredNetwork?: string | null;
   isAdmin?: boolean;
 }
 

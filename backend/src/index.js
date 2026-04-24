@@ -18,6 +18,16 @@ import rateLimit from './middleware/rateLimit.js';
 import errorHandler from './middleware/errorHandler.js';
 import logger from './utils/logger.js';
 import runAgent from './agents/agentRunner.js';
+import {
+  approvePayout,
+  listPayouts,
+  payoutRuntimeSnapshot,
+  preparePayoutPlan,
+  refreshPayoutStatus,
+  summariseTaskResult,
+  normalizeNetwork,
+  isValidAddressForNetwork,
+} from './services/payoutService.js';
 import './workers/agentWorker.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -113,9 +123,12 @@ function classifyAgent(action = '') {
 }
 
 function sanitizeTask(task) {
+  const parsedResult = parseTaskResult(task.result);
+  const summary = summariseTaskResult(parsedResult);
   return {
     ...task,
-    result: parseTaskResult(task.result),
+    result: parsedResult,
+    summary,
   };
 }
 
@@ -132,12 +145,14 @@ async function runTaskInline(task) {
   const user = task.userId
     ? await prisma.user.findUnique({ where: { id: task.userId } }).catch(() => null)
     : null;
+  const profiles = user?.walletProfiles && typeof user.walletProfiles === 'object' ? user.walletProfiles : {};
+  const activeWallet = profiles?.[user?.preferredNetwork || 'ethereum'] || user?.walletAddress || null;
 
   try {
     const result = await runAgent({
       action: task.action,
       agentType: classifyAgent(task.action),
-      walletAddress: user?.walletAddress || null,
+      walletAddress: activeWallet,
     });
 
     const updated = await prisma.task.update({
@@ -147,7 +162,7 @@ async function runTaskInline(task) {
         completedAt: new Date(),
         result: JSON.stringify({
           output: result.output,
-          summary: result.output?.slice(0, 280) || '',
+          summary: summariseTaskResult(result.output).slice(0, 1200) || '',
           provider: result.provider,
           agentType: result.agentType,
         }),
@@ -216,6 +231,7 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
     }));
 
   const user = await prisma.user.findUnique({ where: { id: req.user.sub } }).catch(() => null);
+  const payoutRuntime = payoutRuntimeSnapshot();
 
   res.json({
     providers: providerFlags,
@@ -224,6 +240,9 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
     queueEnabled: !!taskQueue,
     fleet,
     walletAddress: user?.walletAddress || null,
+    walletProfiles: user?.walletProfiles || {},
+    preferredNetwork: user?.preferredNetwork || 'ethereum',
+    payoutRuntime,
   });
 });
 
@@ -243,7 +262,17 @@ app.post('/auth/register', async (req, res) => {
     const token = signToken({ sub: user.id, username: user.username });
 
     res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.json({ id: user.id, username: user.username, token, isAdmin: user.username === 'okwedavid' });
+    res.json({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      bio: user.bio,
+      walletAddress: user.walletAddress,
+      walletProfiles: user.walletProfiles || {},
+      preferredNetwork: user.preferredNetwork || 'ethereum',
+      token,
+      isAdmin: user.username === 'okwedavid',
+    });
   } catch (error) {
     logger.error('register error', error);
     res.status(500).json({ error: 'failed' });
@@ -264,7 +293,17 @@ app.post('/auth/login', async (req, res) => {
 
     const token = signToken({ sub: user.id, username: user.username });
     res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.json({ id: user.id, username: user.username, token, walletAddress: user.walletAddress, isAdmin: user.username === 'okwedavid' });
+    res.json({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      bio: user.bio,
+      token,
+      walletAddress: user.walletAddress,
+      walletProfiles: user.walletProfiles || {},
+      preferredNetwork: user.preferredNetwork || 'ethereum',
+      isAdmin: user.username === 'okwedavid',
+    });
   } catch (error) {
     logger.error('login error', error);
     res.status(500).json({ error: 'failed' });
@@ -278,7 +317,11 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     res.json({
       id: user.id,
       username: user.username,
+      displayName: user.displayName,
+      bio: user.bio,
       walletAddress: user.walletAddress,
+      walletProfiles: user.walletProfiles || {},
+      preferredNetwork: user.preferredNetwork || 'ethereum',
       isAdmin: user.username === 'okwedavid',
     });
   } catch {
@@ -286,21 +329,75 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+app.patch('/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const current = await prisma.user.findUnique({ where: { id: req.user.sub } });
+    if (!current) return res.status(404).json({ error: 'user not found' });
+
+    const data = {};
+    if (typeof req.body.displayName === 'string') data.displayName = req.body.displayName.trim().slice(0, 80) || null;
+    if (typeof req.body.bio === 'string') data.bio = req.body.bio.trim().slice(0, 280) || null;
+    if (typeof req.body.preferredNetwork === 'string') data.preferredNetwork = normalizeNetwork(req.body.preferredNetwork).id;
+
+    const updated = await prisma.user.update({
+      where: { id: req.user.sub },
+      data,
+    });
+
+    res.json({
+      id: updated.id,
+      username: updated.username,
+      displayName: updated.displayName,
+      bio: updated.bio,
+      walletAddress: updated.walletAddress,
+      walletProfiles: updated.walletProfiles || {},
+      preferredNetwork: updated.preferredNetwork || 'ethereum',
+      isAdmin: updated.username === 'okwedavid',
+    });
+  } catch (error) {
+    logger.error('profile update error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
 app.post('/auth/wallet', authMiddleware, async (req, res) => {
   try {
     const { walletAddress } = req.body;
+    const network = normalizeNetwork(req.body.network).id;
+    const user = await prisma.user.findUnique({ where: { id: req.user.sub } });
+    if (!user) return res.status(404).json({ error: 'user not found' });
+
     if (walletAddress !== null && walletAddress !== undefined) {
-      if (typeof walletAddress !== 'string' || !walletAddress.startsWith('0x') || walletAddress.length !== 42) {
+      if (typeof walletAddress !== 'string' || !isValidAddressForNetwork(walletAddress, normalizeNetwork(network))) {
         return res.status(400).json({ error: 'Invalid wallet address' });
       }
     }
 
-    const user = await prisma.user.update({
+    const profiles = user.walletProfiles && typeof user.walletProfiles === 'object'
+      ? { ...user.walletProfiles }
+      : {};
+
+    if (walletAddress) {
+      profiles[network] = walletAddress;
+    } else {
+      delete profiles[network];
+    }
+
+    const updated = await prisma.user.update({
       where: { id: req.user.sub },
-      data: { walletAddress: walletAddress || null },
+      data: {
+        walletAddress: walletAddress || null,
+        walletProfiles: profiles,
+        preferredNetwork: network,
+      },
     });
 
-    res.json({ ok: true, walletAddress: user.walletAddress });
+    res.json({
+      ok: true,
+      walletAddress: updated.walletAddress,
+      walletProfiles: updated.walletProfiles || {},
+      preferredNetwork: updated.preferredNetwork || 'ethereum',
+    });
   } catch (error) {
     logger.error('wallet save error', error);
     res.status(500).json({ error: 'failed' });
@@ -427,6 +524,94 @@ app.delete('/tasks/all', authMiddleware, async (req, res) => {
   } catch (error) {
     logger.error('bulk delete error', error);
     res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.post('/payouts/prepare', authMiddleware, async (req, res) => {
+  try {
+    const network = normalizeNetwork(req.body.network).id;
+    const amount = req.body.amount;
+    const recipientAddress = req.body.recipientAddress || null;
+    const sourceAction = typeof req.body.action === 'string' && req.body.action.trim()
+      ? req.body.action.trim()
+      : `Prepare routing plan for ${amount} on ${network}.`;
+
+    const task = await prisma.task.create({
+      data: {
+        id: uuidv4(),
+        action: sourceAction,
+        status: 'running',
+        userId: req.user.sub,
+      },
+    });
+
+    await publish('agentfi:tasks', { type: 'task:created', data: sanitizeTask(task) });
+    await publish('agentfi:tasks', { type: 'task:running', data: sanitizeTask(task) });
+
+    const payout = await preparePayoutPlan({
+      userId: req.user.sub,
+      taskId: task.id,
+      network,
+      amount,
+      recipientAddress,
+    });
+
+    const completedTask = await prisma.task.update({
+      where: { id: task.id },
+      data: {
+        status: payout.status === 'blocked' ? 'failed' : 'completed',
+        completedAt: new Date(),
+        result: JSON.stringify({
+          summary: payout.summary,
+          payoutId: payout.id,
+          network: payout.network,
+          payoutStatus: payout.status,
+        }),
+      },
+    });
+
+    await publish('agentfi:tasks', {
+      type: payout.status === 'blocked' ? 'task:failed' : 'task:completed',
+      data: sanitizeTask(completedTask),
+    });
+
+    res.json({
+      payout,
+      task: sanitizeTask(completedTask),
+    });
+  } catch (error) {
+    logger.error('prepare payout error', error);
+    res.status(400).json({ error: error.message || 'Could not prepare payout.' });
+  }
+});
+
+app.get('/payouts', authMiddleware, async (req, res) => {
+  try {
+    const payouts = await listPayouts(req.user.sub);
+    res.json(payouts);
+  } catch (error) {
+    logger.error('list payouts error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.get('/payouts/:id/status', authMiddleware, async (req, res) => {
+  try {
+    const payout = await refreshPayoutStatus({ payoutId: req.params.id, userId: req.user.sub });
+    res.json(payout);
+  } catch (error) {
+    logger.error('refresh payout status error', error);
+    res.status(400).json({ error: error.message || 'Could not refresh payout status.' });
+  }
+});
+
+app.post('/payouts/:id/approve', authMiddleware, async (req, res) => {
+  try {
+    const payout = await approvePayout({ payoutId: req.params.id, userId: req.user.sub });
+    res.json(payout);
+  } catch (error) {
+    logger.error('approve payout error', error);
+    res.status(400).json({ error: error.message || 'Could not approve payout.' });
   }
 });
 
