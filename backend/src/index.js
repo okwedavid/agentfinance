@@ -621,6 +621,15 @@ app.use('/wallet', walletRouter);
 app.use('/api/tasks/replay', replayRouter);
 
 try {
+  const factoryRouter = (await import('./routes/factory.js')).default;
+  app.use('/api/factory', factoryRouter);
+  app.use('/factory', factoryRouter);
+  logger.info('Factory router mounted at /api/factory');
+} catch (error) {
+  logger.warn(`Factory router not found: ${error.message}`);
+}
+
+try {
   const coordinatorRouter = (await import('./routes/coordinator.js')).default;
   app.use('/api/coord', coordinatorRouter);
 } catch (error) {

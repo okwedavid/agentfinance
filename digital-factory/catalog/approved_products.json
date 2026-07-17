@@ -1,0 +1,59 @@
+[
+  {
+    "slug": "ai-freelancer-client-os",
+    "brand_name": "FreelancerFlow AI™",
+    "title": "AI Client Acquisition OS for Freelancers: Get 3-5 High-Ticket Clients in 30 Days Without Cold Calling",
+    "outcome": "3-5 qualified leads/week, 60% close rate, $2k+ per client, 15h/week freed",
+    "avatar": "Freelancers earning $1-3k/mo who want to hit $5k+ retainers, tired of Upwork race to bottom",
+    "price": 49,
+    "evaluation": {
+      "demand_score": 9,
+      "competition_score": 7,
+      "value_score": 9,
+      "price_score": 8,
+      "market_confidence": 8,
+      "overall": 8.2,
+      "verdict": "APPROVED",
+      "reason": "High pain, clear outcome, willingness to pay $49-99 proven on Gumroad. Medium competition but differentiation strong.",
+      "suggested_price": 49,
+      "price_tiers": {
+        "basic": 19,
+        "standard": 49,
+        "premium": 99
+      },
+      "target_audience_detailed": "Freelancers 23-35yo, US/EU, 1-3 years experience, on Upwork/Fiverr but want off platform, follows @AlexHormozi, @DylanBowen, active in IndieHackers, r/freelance",
+      "improvement_tips": [
+        "Add Loom video walkthrough",
+        "Add real outreach screenshots"
+      ],
+      "risk_flags": []
+    },
+    "created_at": "2026-07-17T21:50:51.346Z",
+    "files_customer": [
+      "Bonus.md",
+      "Bonus_Checklist.md",
+      "License.txt",
+      "Prompt_Library.md",
+      "README.md",
+      "Resources.md",
+      "START_HERE.txt",
+      "User_Guide.md"
+    ],
+    "files_publishing": [
+      "email.txt",
+      "etsy.md",
+      "facebook.txt",
+      "gumroad.md",
+      "hashtags.txt",
+      "instagram.txt",
+      "linkedin.txt",
+      "listing.json",
+      "listing.txt",
+      "payhip.txt",
+      "pinterest.txt",
+      "seo.txt",
+      "shopify.html",
+      "twitter.txt"
+    ]
+  }
+]

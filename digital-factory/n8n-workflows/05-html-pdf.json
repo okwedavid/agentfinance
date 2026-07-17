@@ -1,0 +1,88 @@
+{
+  "name": "05 - HTML-PDF GENERATOR",
+  "notes": "Generates styled HTML and PDF from markdown using n8n HTML Extract & Write Binary File nodes",
+  "nodes": [
+    {
+      "parameters": { "isInSubWorkflow": true },
+      "id": "trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $input.item.json;\n// Build structured files for HTML generation\nconst files = [\n  { name: 'User_Guide', content: base.guide, title: base.brand_name + ' - Complete Guide' },\n  { name: 'Prompt_Library', content: base.prompts, title: base.brand_name + ' - Prompt Library' },\n  { name: 'Bonus_Checklist', content: base.checklist, title: base.brand_name + ' - Checklist' },\n  { name: 'Resources', content: base.resources, title: base.brand_name + ' - Resources' },\n  { name: 'Bonus', content: base.bonus, title: base.brand_name + ' - Bonus' },\n  { name: 'START_HERE', content: `# START HERE - ${base.brand_name}\\n\\nWelcome to ${base.brand_name}!\\n\\nOutcome: ${base.dream_outcome}\\nAvatar: ${base.avatar}\\n\\nQuick Start: Read this, open checklist, implement module 1 quick win.`, title: 'START HERE - ' + base.brand_name }\n];\n// generate simple HTML from markdown (marked equivalent via regex for n8n no deps)\nfunction mdToHtml(md){ return md.replace(/^# (.*)$/gm,'<h1>$1</h1>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/\\*\\*(.*?)\\*\\*/g,'<strong>$1</strong>').replace(/\\n/g,'<br/>'); }\nconst htmlTemplate = (content, title) => `<!DOCTYPE html><html><head><meta charset='UTF-8'><title>${title}</title><style>body{font-family:Inter,sans-serif;max-width:800px;margin:0 auto;padding:40px;line-height:1.7;color:#0f172a}h1{font-size:32px;border-bottom:3px solid #6366f1;padding-bottom:12px}h2{font-size:24px;margin:30px 0 10px}h3{font-size:18px}pre{background:#0f172a;color:#e2e8f0;padding:20px;border-radius:12px}blockquote{border-left:4px solid #6366f1;padding:12px 20px;background:#f8fafc;border-radius:8px}</style></head><body><h1>${title}</h1>${mdToHtml(content)}<footer style='margin-top:60px;border-top:1px solid #e2e8f0;text-align:center;color:#64748b;font-size:12px'>Premium Product | ${base.brand_name} | 2026</footer></body></html>`;\nreturn files.map(f=>({ json: { ...base, file_name: f.name, html: htmlTemplate(f.content, f.title), markdown: f.content, title: f.title } }));"
+      },
+      "id": "build-html",
+      "name": "Build Styled HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "filePath": "=C:/DigitalFactory/Products/{{$json.slug}}/Customer/{{$json.file_name}}.html",
+        "binaryPropertyName": "data",
+        "options": {
+          "append": false
+        }
+      },
+      "id": "write-html",
+      "name": "Write HTML File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "operation": "generate",
+        "binaryPropertyName": "data",
+        "options": {
+          "margin": {
+            "top": 20,
+            "bottom": 20,
+            "left": 15,
+            "right": 15
+          },
+          "format": "A4",
+          "printBackground": true
+        }
+      },
+      "id": "html-to-pdf",
+      "name": "HTML to PDF",
+      "type": "n8n-nodes-base.htmlToPdf",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "filePath": "=C:/DigitalFactory/Products/{{$json.slug}}/Customer/{{$json.file_name}}.pdf",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "write-pdf",
+      "name": "Write PDF File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const first = $input.first().json;\n// return base for next workflow\nreturn [{ json: { ...first, processed_files: $input.all.map(i=>i.json.file_name) } }];"
+      },
+      "id": "return",
+      "name": "Return Base",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 300]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": { "main": [[{ "node": "Build Styled HTML", "type": "main", "index": 0 }]] },
+    "Build Styled HTML": { "main": [[{ "node": "Write HTML File", "type": "main", "index": 0 }]] },
+    "Write HTML File": { "main": [[{ "node": "HTML to PDF", "type": "main", "index": 0 }]] },
+    "HTML to PDF": { "main": [[{ "node": "Write PDF File", "type": "main", "index": 0 }]] },
+    "Write PDF File": { "main": [[{ "node": "Return Base", "type": "main", "index": 0 }]] }
+  }
+}
