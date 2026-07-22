@@ -1,28 +1,36 @@
 {
   "name": "digital-factory",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
-  "description": "AI Product Factory - Generates premium digital products with Groq + n8n + auto-publishing to Gumroad, Payhip, Etsy, Shopify, WooCommerce, Ko-fi, LemonSqueezy",
+  "description": "AI Product Factory - Lightweight Windows 11 build, no native canvas required. Uses Groq + n8n + auto-publishing to Gumroad, Etsy, Shopify, etc.",
   "scripts": {
     "dev": "node src/factory.js --dev",
     "factory": "node src/factory.js",
-    "factory:batch": "node src/factory.js --batch 10",
     "factory:single": "node src/factory.js --single",
+    "factory:batch": "node src/factory.js --batch 3",
+    "factory:demo": "node src/demo/generateDemoProduct.js",
+    "factory:demo-light": "node src/demo/generateDemoProduct.js",
     "eval": "node src/generators/evaluator.js",
     "list": "node src/utils/lister.js",
     "publish:gumroad": "node src/publishers/gumroad.js",
     "publish:shopify": "node src/publishers/shopify.js",
     "publish:etsy": "node src/publishers/etsy.js",
-    "publish:all": "node src/publishers/publishAll.js"
+    "publish:all": "node src/publishers/publishAll.js",
+    "install:light": "npm install --no-optional",
+    "clean": "node -e \"require('fs').rmSync('node_modules',{recursive:true,force:true}); console.log('cleaned')\""
   },
   "dependencies": {
-    "groq-sdk": "^0.32.0",
-    "puppeteer": "^22.0.0",
     "archiver": "^7.0.1",
-    "canvas": "^2.11.2",
     "dotenv": "^16.4.5",
+    "groq-sdk": "^0.32.0",
     "marked": "^12.0.0",
     "slugify": "^1.6.6",
     "zod": "^3.23.0"
+  },
+  "optionalDependencies": {
+    "puppeteer": "^24.15.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
