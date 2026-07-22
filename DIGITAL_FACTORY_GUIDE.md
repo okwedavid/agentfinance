@@ -47,6 +47,7 @@ node src/demo/generateDemoProduct.js
 
 # 4. Generate real product (needs key)
 npm run factory:single
+
 # or batch 10
 node src/factory.js --batch 10
 
@@ -124,4 +125,3 @@ Highest ROI: Upgrade quality to outcome (DONE), professional covers (DONE), auto
 All code + docs + workflows are on branch `arena/019f7204-agentfinance` ready to pull on Windows.
 
 Start: set GROQ key, `npm run factory:single`, check product.
-
