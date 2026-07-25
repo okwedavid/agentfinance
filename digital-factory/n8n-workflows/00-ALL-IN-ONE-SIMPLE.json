@@ -1,0 +1,410 @@
+{
+  "name": "00 - ALL-IN-ONE SIMPLE FACTORY (Beginner)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "minutesInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Daily 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [460, 500]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "batch",
+              "name": "batch_size",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "score",
+              "name": "min_score",
+              "value": 7,
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "set-config",
+      "name": "Set Factory Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const niches = ['AI Freelancer Client Acquisition OS for $5k retainers','30-Day AI Content Engine for Coaches','AI Proposal Writing System that closes 60%+','AI Student Research Vault + Citation OS','AI Job Application Accelerator'];\nconst random = niches[Math.floor(Math.random()*niches.length)];\nreturn [{ json: { niche_hint: random, min_score: $input.item.json.min_score || 7 } }];"
+      },
+      "id": "pick-niche",
+      "name": "Pick Random Niche",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "llama-3.3-70b-versatile"
+            },
+            {
+              "name": "temperature",
+              "value": 0.9
+            },
+            {
+              "name": "response_format",
+              "value": "={\"type\":\"json_object\"}"
+            },
+            {
+              "name": "messages",
+              "value": "= [{\"role\":\"system\",\"content\":\"You are premium digital product strategist. JSON only, brandable name with ™, outcome-driven not toolkit.\"},{\"role\":\"user\",\"content\":\"Generate ONE premium product for niche: {{$json.niche_hint}}. Return JSON: slug, brand_name with ™, title outcome, outcome, tagline, avatar specific, pain, dream_outcome, core_modules[6], deliverables[], differentiation, price_point, price_reason, keywords[10]\"}]"
+            }
+          ]
+        }
+      },
+      "id": "groq-idea",
+      "name": "Groq Idea Generation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $input.item.json.choices?.[0]?.message?.content || '{}';\nlet idea; try{ idea=JSON.parse(c);}catch(e){ const m=c.match(/\\{[\\s\\S]*\\}/); idea=m?JSON.parse(m[0]):{}; }\nif(!idea.slug) idea.slug=(idea.title||'product').toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,60);\nreturn [{ json: { ...idea } }];"
+      },
+      "id": "parse-idea",
+      "name": "Parse Idea JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "llama-3.1-8b-instant"
+            },
+            {
+              "name": "temperature",
+              "value": 0.3
+            },
+            {
+              "name": "response_format",
+              "value": "={\"type\":\"json_object\"}"
+            },
+            {
+              "name": "messages",
+              "value": "= [{\"role\":\"system\",\"content\":\"You are ruthless evaluator for Gumroad/Etsy. Score 1-10 Demand, Competition (10=low), Value, Price, Confidence, overall avg, verdict APPROVED if >=7. JSON only.\"},{\"role\":\"user\",\"content\":\"Evaluate Title: {{$json.title}} Brand: {{$json.brand_name}} Avatar: {{$json.avatar}} Pain: {{$json.pain}} Outcome: {{$json.dream_outcome}} Price: {{$json.price_point}}. Return {demand_score, competition_score, value_score, price_score, market_confidence, overall, verdict, reason, suggested_price}\"}]"
+            }
+          ]
+        }
+      },
+      "id": "groq-eval",
+      "name": "Groq Evaluator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base=$('Parse Idea JSON').item.json;\nconst evalStr=$input.item.json.choices?.[0]?.message?.content||'{}';\nlet ev; try{ ev=JSON.parse(evalStr);}catch(e){ const m=evalStr.match(/\\{[\\s\\S]*\\}/); ev=m?JSON.parse(m[0]):{}; }\nif(!ev.overall){ const avg=(ev.demand_score+ev.competition_score+ev.value_score+ev.price_score+ev.market_confidence)/5; ev.overall=Math.round(avg*10)/10; }\nif(!ev.verdict) ev.verdict=ev.overall>=7?'APPROVED':'REJECTED';\nreturn [{ json: { ...base, evaluation: ev, ...ev } }];"
+      },
+      "id": "merge-eval",
+      "name": "Merge Idea + Evaluation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.verdict }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "APPROVED"
+            }
+          ]
+        }
+      },
+      "id": "if-approved",
+      "name": "IF Approved? Gate >=7",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "llama-3.3-70b-versatile"
+            },
+            {
+              "name": "temperature",
+              "value": 0.75
+            },
+            {
+              "name": "max_tokens",
+              "value": 5000
+            },
+            {
+              "name": "messages",
+              "value": "= [{\"role\":\"system\",\"content\":\"Premium guide author 2500-3500w tactical no fluff Markdown.\"},{\"role\":\"user\",\"content\":\"Write MAIN GUIDE for {{$json.title}} Brand {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Pain {{$json.pain}} Modules {{JSON.stringify($json.core_modules)}}. Structure Quick Win, 6 Modules with Why Framework Template Action, 30-Day Roadmap.\"}]"
+            }
+          ]
+        }
+      },
+      "id": "groq-guide",
+      "name": "Groq Guide",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "llama-3.1-8b-instant"
+            },
+            {
+              "name": "messages",
+              "value": "= [{\"role\":\"system\",\"content\":\"Checklist markdown checkboxes 30-50 items 3 phases.\"},{\"role\":\"user\",\"content\":\"Checklist for {{$json.brand_name}} Outcome {{$json.dream_outcome}} Phases Setup Day1-3, Execution Day4-21, Scale Day22-30\"}]"
+            }
+          ]
+        }
+      },
+      "id": "groq-checklist",
+      "name": "Groq Checklist",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 600],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base=$('IF Approved? Gate >=7').item.json;\nconst guide=$items('Groq Guide',0,0)[0]?.json?.choices?.[0]?.message?.content||'# Guide';\nconst checklist=$items('Groq Checklist',0,0)[0]?.json?.choices?.[0]?.message?.content||'# Checklist';\nconst svg=`<svg width='1600' height='1200' viewBox='0 0 1600 1200' xmlns='http://www.w3.org/2000/svg'><defs><linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'><stop offset='0%' stop-color='#0f172a'/><stop offset='100%' stop-color='#6366f1'/></linearGradient></defs><rect width='1600' height='1200' fill='url(#bg)' rx='40'/><text x='80' y='150' font-family='Inter' font-weight='800' font-size='60' fill='white'>${(base.brand_name||'Premium').slice(0,30)}</text><foreignObject x='80' y='250' width='1400' height='500'><div xmlns='http://www.w3.org/1999/xhtml' style='font-family:Inter;color:white;font-size:48px;font-weight:800'>${(base.title||'').slice(0,120)}</div></foreignObject></svg>`;\nconst files={\n  'User_Guide.md': guide,\n  'Bonus_Checklist.md': checklist,\n  'README.md': `# ${base.brand_name}\\n${base.title}\\nOutcome: ${base.dream_outcome}`,\n  'Cover.svg': svg,\n  'Cover.html': `<html><body style='margin:0'>${svg}</body></html>`,\n  'gumroad.md': `# ${base.title}\\n\\nOutcome: ${base.dream_outcome}\\nAvatar: ${base.avatar}\\nPrice: $${base.suggested_price}`,\n  'seo.txt': `Slug: ${base.slug} Title: ${base.title}`,\n  'twitter.txt': `Launch ${base.brand_name}: ${base.title} Price $${base.suggested_price}`\n};\nreturn Object.entries(files).map(([fn, content])=>({ json: { slug: base.slug, filename: fn, content, brand_name: base.brand_name } }));"
+      },
+      "id": "split-files",
+      "name": "Split Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 400]
+    },
+    {
+      "parameters": {
+        "filePath": "=C:/DigitalFactory/Products/{{$json.slug}}/Customer/{{$json.filename}}",
+        "options": {}
+      },
+      "id": "write-files",
+      "name": "Write Files to C:/DigitalFactory",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [2720, 400]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Factory Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Daily 9am": {
+      "main": [
+        [
+          {
+            "node": "Set Factory Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Factory Config": {
+      "main": [
+        [
+          {
+            "node": "Pick Random Niche",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Random Niche": {
+      "main": [
+        [
+          {
+            "node": "Groq Idea Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Idea Generation": {
+      "main": [
+        [
+          {
+            "node": "Parse Idea JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Idea JSON": {
+      "main": [
+        [
+          {
+            "node": "Groq Evaluator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Evaluator": {
+      "main": [
+        [
+          {
+            "node": "Merge Idea + Evaluation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Idea + Evaluation": {
+      "main": [
+        [
+          {
+            "node": "IF Approved? Gate >=7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Approved? Gate >=7": {
+      "main": [
+        [
+          {
+            "node": "Groq Guide",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Groq Checklist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Groq Guide": {
+      "main": [
+        [
+          {
+            "node": "Split Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Checklist": {
+      "main": [
+        [
+          {
+            "node": "Split Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Files": {
+      "main": [
+        [
+          {
+            "node": "Write Files to C:/DigitalFactory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
