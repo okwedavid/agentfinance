@@ -402,7 +402,6 @@
       "parameters": {
         "operation": "write",
         "filePath": "={{ $json.filePath }}",
-        "fileContent": "={{ $json.content }}",
         "options": {}
       },
       "id": "write-files",
@@ -424,6 +423,22 @@
       "typeVersion": 2,
       "position": [
         4860,
+        250
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "jsonToBinary",
+        "jsonProperty": "=content",
+        "binaryProperty": "data",
+        "options": {}
+      },
+      "id": "move-binary",
+      "name": "Convert Content to Binary",
+      "type": "n8n-nodes-base.moveBinaryData",
+      "typeVersion": 1,
+      "position": [
+        4530,
         250
       ]
     }
@@ -643,7 +658,7 @@
       "main": [
         [
           {
-            "node": "Write Files to C:/DigitalFactory",
+            "node": "Convert Content to Binary",
             "type": "main",
             "index": 0
           }
@@ -655,6 +670,17 @@
         [
           {
             "node": "Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Content to Binary": {
+      "main": [
+        [
+          {
+            "node": "Write Files to C:/DigitalFactory",
             "type": "main",
             "index": 0
           }
