@@ -49,7 +49,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.75,\n  \"max_tokens\": 5000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product author. Write $99-worthy guide 2500-3500w tactical frameworks, no fluff 'in fast-paced world'. Markdown.\"},\n    {\"role\": \"user\", \"content\": \"Write MAIN GUIDE for {{$json.title}} Brand {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Pain {{$json.pain}} Modules {{JSON.stringify($json.core_modules)}} Differentiation {{$json.differentiation}}. Structure Quick Win, Module1-6 with Why,Framework,Template,Action Steps, 30-Day Roadmap, Troubleshooting.\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.75,\n  \"max_tokens\": 5000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product author. Write $99-worthy guide 2500-3500w tactical frameworks, no fluff 'in fast-paced world'. Markdown. NEVER use phrases like In today fast-paced world, In ever-evolving landscape, In digital age. Start directly with pain + promise, tactical, no fluff.\"},\n    {\"role\": \"user\", \"content\": \"Write MAIN GUIDE for {{$json.title}} Brand {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Pain {{$json.pain}} Modules {{JSON.stringify($json.core_modules)}} Differentiation {{$json.differentiation}}. Structure Quick Win, Module1-6 with Why,Framework,Template,Action Steps, 30-Day Roadmap, Troubleshooting.\"}\n  ]\n}"
       },
       "id": "groq-guide",
       "name": "Groq Guide",
@@ -133,7 +133,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.6,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You curate tools, templates, resources. Real tool names.\"},\n    {\"role\": \"user\", \"content\": \"Create Resources vault for \" + $json.brand_name + \" Avatar \" + $json.avatar + \" Title \" + $json.title + \" Structure Essential Tools, Templates, Communities, Books, AI Stack, Bonus Discounts.\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.6,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You curate tools, templates, resources. Real tool names. NEVER use fluff like In today's fast-paced world. Tactical only.\"},\n    {\"role\": \"user\", \"content\": \"Create Resources vault for {{$json.brand_name}} Avatar {{$json.avatar}} Title {{$json.title}} Structure Essential Tools, Templates, Communities, Books, AI Stack, Bonus Discounts.\"}\n  ]\n}"
       },
       "id": "groq-resources",
       "name": "Groq Resources",
@@ -161,7 +161,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.7,\n  \"max_tokens\": 2500,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You create bonus increasing perceived value 2x tactical.\"},\n    {\"role\": \"user\", \"content\": \"Create BONUS for \" + $json.brand_name + \" Should be 7-Day Quick Start + 3 case studies (realistic). Avatar \" + $json.avatar + \" Outcome \" + $json.dream_outcome}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.7,\n  \"max_tokens\": 2500,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You create bonus increasing perceived value 2x tactical. NEVER fluff.\"},\n    {\"role\": \"user\", \"content\": \"Create BONUS for {{$json.brand_name}} Should be 7-Day Quick Start + 3 case studies (realistic). Avatar {{$json.avatar}} Outcome {{$json.dream_outcome}}\"}\n  ]\n}"
       },
       "id": "groq-bonus",
       "name": "Groq Bonus",

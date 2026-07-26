@@ -188,7 +188,7 @@
         "nodeCredentialType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.75,\n  \"max_tokens\": 5000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product author. Write $99-worthy guide 2500-3500w tactical frameworks, no fluff 'in fast-paced world'. Markdown.\"},\n    {\"role\": \"user\", \"content\": \"Write MAIN GUIDE for {{$json.title}} Brand {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Pain {{$json.pain}} Modules {{JSON.stringify($json.core_modules)}} Differentiation {{$json.differentiation}}. Structure Quick Win, Module1-6 with Why,Framework,Template,Action Steps, 30-Day Roadmap, Troubleshooting.\"}\n  ]\n}",
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.75,\n  \"max_tokens\": 5000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product author. Write $99-worthy guide 2500-3500w tactical frameworks, no fluff 'in fast-paced world'. Markdown. NEVER use phrases like In today fast-paced world, In ever-evolving landscape, In digital age. Start directly with pain + promise, tactical, no fluff.\"},\n    {\"role\": \"user\", \"content\": \"Write MAIN GUIDE for {{$json.title}} Brand {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Pain {{$json.pain}} Modules {{JSON.stringify($json.core_modules)}} Differentiation {{$json.differentiation}}. Structure Quick Win, Module1-6 with Why,Framework,Template,Action Steps, 30-Day Roadmap, Troubleshooting.\"}\n  ]\n}",
         "options": {
           "bodyContentType": "json"
         }
