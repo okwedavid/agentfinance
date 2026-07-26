@@ -18,32 +18,14 @@
       "parameters": {
         "url": "https://api.groq.com/openai/v1/chat/completions",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "model",
-              "value": "llama-3.1-8b-instant"
-            },
-            {
-              "name": "temperature",
-              "value": 0.3
-            },
-            {
-              "name": "response_format",
-              "value": "={\"type\":\"json_object\"}"
-            },
-            {
-              "name": "messages",
-              "value": "= [{\"role\":\"system\",\"content\":\"You are ruthless product evaluator for Gumroad/Etsy. Score 1-10: Demand, Competition (10=low comp), Value, Price, Confidence. Overall=avg. APPROVED if >=7. Output JSON only.\"},{\"role\":\"user\",\"content\":\"Evaluate: Title: {{$json.title}} Brand: {{$json.brand_name}} Avatar: {{$json.avatar}} Pain: {{$json.pain}} Outcome: {{$json.dream_outcome}} Price: {{$json.price_point}} Modules: {{JSON.stringify($json.core_modules)}}. Return JSON: {demand_score, competition_score, value_score, price_score, market_confidence, overall, verdict APPROVED/REJECTED, reason, suggested_price, price_tiers:{basic,standard,premium}, target_audience_detailed, improvement_tips[], risk_flags[]}\"}]"
-            }
-          ]
-        },
         "options": {
           "bodyContentType": "json"
         },
         "method": "POST",
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth"
+        "nodeCredentialType": "httpHeaderAuth",
+        "specifyBody": "json",
+        "jsonBody": "= {\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.3,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are ruthless product evaluator for Gumroad/Etsy. Score 1-10 Demand, Competition (10=low good), Value, Price, Confidence. Overall avg. APPROVED if >=7. JSON only.\"},\n    {\"role\": \"user\", \"content\": \"Evaluate Title: \" + $json.title + \" Brand: \" + $json.brand_name + \" Avatar: \" + $json.avatar + \" Pain: \" + $json.pain + \" Outcome: \" + $json.dream_outcome + \" Price: \" + $json.price_point + \" Modules: \" + JSON.stringify($json.core_modules) + \". Return JSON: {demand_score, competition_score, value_score, price_score, market_confidence, overall, verdict APPROVED/REJECTED, reason, suggested_price, price_tiers:{basic,standard,premium}}\"}\n  ]\n}"
       },
       "id": "groq-eval",
       "name": "Groq Evaluator (Fast Model)",
