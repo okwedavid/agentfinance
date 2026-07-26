@@ -10,7 +10,10 @@
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [460, 300]
+      "position": [
+        460,
+        300
+      ]
     },
     {
       "parameters": {
@@ -20,7 +23,10 @@
       "name": "Pick Random Niche",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 300]
+      "position": [
+        680,
+        300
+      ]
     },
     {
       "parameters": {
@@ -44,21 +50,26 @@
             },
             {
               "name": "messages",
-              "value": "=[{\"role\":\"system\",\"content\":\"You are premium digital product strategist. Generate OUTCOME-driven products, NOT toolkits. Brandable name with ™. JSON only.\"},{\"role\":\"user\",\"content\":\"Generate ONE premium product for niche: {{$json.niche_hint}}. Return JSON with: slug, brand_name, title (outcome), outcome, tagline, avatar, pain, dream_outcome, core_modules[6-8], deliverables[], differentiation, price_point, price_reason, bundle_with[], keywords[10], est_demand, competition_level\"}]"
+              "value": "=[{\"role\":\"system\",\"content\":\"You are premium digital product strategist. Generate OUTCOME-driven products, NOT toolkits. Brandable name with \u2122. JSON only.\"},{\"role\":\"user\",\"content\":\"Generate ONE premium product for niche: {{$json.niche_hint}}. Return JSON with: slug, brand_name, title (outcome), outcome, tagline, avatar, pain, dream_outcome, core_modules[6-8], deliverables[], differentiation, price_point, price_reason, bundle_with[], keywords[10], est_demand, competition_level\"}]"
             }
           ]
         },
         "options": {
           "response": {
             "fullResponse": false
-          }
-        }
+          },
+          "bodyContentType": "json"
+        },
+        "method": "POST"
       },
       "id": "groq-idea",
       "name": "Groq Idea Generation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 300],
+      "position": [
+        900,
+        300
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "groq-api-key",
@@ -74,12 +85,45 @@
       "name": "Parse Idea JSON",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 300]
+      "position": [
+        1120,
+        300
+      ]
     }
   ],
   "connections": {
-    "When Executed by Another Workflow": { "main": [[{ "node": "Pick Random Niche", "type": "main", "index": 0 }]] },
-    "Pick Random Niche": { "main": [[{ "node": "Groq Idea Generation", "type": "main", "index": 0 }]] },
-    "Groq Idea Generation": { "main": [[{ "node": "Parse Idea JSON", "type": "main", "index": 0 }]] }
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Pick Random Niche",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Random Niche": {
+      "main": [
+        [
+          {
+            "node": "Groq Idea Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Idea Generation": {
+      "main": [
+        [
+          {
+            "node": "Parse Idea JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }

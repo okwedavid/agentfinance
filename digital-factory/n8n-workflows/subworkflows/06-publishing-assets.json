@@ -2,12 +2,17 @@
   "name": "06 - PUBLISHING ASSETS",
   "nodes": [
     {
-      "parameters": { "isInSubWorkflow": true },
+      "parameters": {
+        "isInSubWorkflow": true
+      },
       "id": "trigger",
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [400, 300]
+      "position": [
+        400,
+        300
+      ]
     },
     {
       "parameters": {
@@ -15,22 +20,45 @@
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "model", "value": "llama-3.3-70b-versatile" },
-            { "name": "temperature", "value": 0.7 },
-            { "name": "response_format", "value": "={\"type\":\"json_object\"}" },
+            {
+              "name": "model",
+              "value": "llama-3.3-70b-versatile"
+            },
+            {
+              "name": "temperature",
+              "value": 0.7
+            },
+            {
+              "name": "response_format",
+              "value": "={\"type\":\"json_object\"}"
+            },
             {
               "name": "messages",
               "value": "= [{\"role\":\"system\",\"content\":\"You are Gumroad+Etsy top seller copywriter. Convert listings 8-12%. JSON only.\"},{\"role\":\"user\",\"content\":\"Product: {{$json.title}} Brand: {{$json.brand_name}} Tagline: {{$json.tagline}} Avatar: {{$json.avatar}} Pain: {{$json.pain}} Outcome: {{$json.dream_outcome}} Modules: {{JSON.stringify($json.core_modules)}} Price: {{$json.evaluation.suggested_price}} Keywords: {{ $json.keywords?.join(', ') }} Differentiation: {{$json.differentiation}}. Return JSON: {title:60char Etsy, long_title, short_description 120char, description_gumroad_md 400-600 words with Hook, Who For, Pain, What Inside, Outcome, Bonus, FAQ, description_etsy 600 chars, description_shopify 500 words, description_payhip 300 words, seo_tags[10], seo_slug, hashtags[20 without #], categories[], etsy_tags[13 max 20 chars], keywords_csv 30 keywords, price_copy, faq[5 {q,a}], whats_included[7]} \"}]"
             }
           ]
+        },
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
         }
       },
       "id": "groq-listing",
       "name": "Groq Listing JSON",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [600, 250],
-      "credentials": { "httpHeaderAuth": { "id": "groq-api-key", "name": "Groq Auth" } }
+      "position": [
+        600,
+        250
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -38,22 +66,45 @@
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "model", "value": "llama-3.3-70b-versatile" },
-            { "name": "temperature", "value": 0.85 },
-            { "name": "response_format", "value": "={\"type\":\"json_object\"}" },
+            {
+              "name": "model",
+              "value": "llama-3.3-70b-versatile"
+            },
+            {
+              "name": "temperature",
+              "value": 0.85
+            },
+            {
+              "name": "response_format",
+              "value": "={\"type\":\"json_object\"}"
+            },
             {
               "name": "messages",
               "value": "= [{\"role\":\"system\",\"content\":\"You are viral social media manager for digital products. JSON only.\"},{\"role\":\"user\",\"content\":\"Product: {{$('When Executed by Another Workflow').item.json.title}} Brand: {{$('When Executed by Another Workflow').item.json.brand_name}} Outcome: {{$('When Executed by Another Workflow').item.json.dream_outcome}} Avatar: {{$('When Executed by Another Workflow').item.json.avatar}}. Return JSON: {twitter_post 280char launch, launch_tweet_thread 5-tweet thread, linkedin_post 400 words story+CTA, facebook_caption 150 words friendly, pinterest_pin_title, pinterest_pin_desc 500 SEO, instagram_caption 150 words, email_campaign:{subject, preview, body 400 words}, product_hunt_tagline 60 char}\"}]"
             }
           ]
+        },
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
         }
       },
       "id": "groq-social",
       "name": "Groq Social Copy",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [600, 500],
-      "credentials": { "httpHeaderAuth": { "id": "groq-api-key", "name": "Groq Auth" } }
+      "position": [
+        600,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -63,7 +114,10 @@
       "name": "Merge Publishing Assets",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [900, 350]
+      "position": [
+        900,
+        350
+      ]
     },
     {
       "parameters": {
@@ -73,7 +127,10 @@
       "name": "Split Files for Writing",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 350]
+      "position": [
+        1100,
+        350
+      ]
     },
     {
       "parameters": {
@@ -84,14 +141,72 @@
       "name": "Write Publishing Files",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [1300, 350]
+      "position": [
+        1300,
+        350
+      ]
     }
   ],
   "connections": {
-    "When Executed by Another Workflow": { "main": [[{ "node": "Groq Listing JSON", "type": "main", "index": 0 }, { "node": "Groq Social Copy", "type": "main", "index": 0 }]] },
-    "Groq Listing JSON": { "main": [[{ "node": "Merge Publishing Assets", "type": "main", "index": 0 }]] },
-    "Groq Social Copy": { "main": [[{ "node": "Merge Publishing Assets", "type": "main", "index": 0 }]] },
-    "Merge Publishing Assets": { "main": [[{ "node": "Split Files for Writing", "type": "main", "index": 0 }]] },
-    "Split Files for Writing": { "main": [[{ "node": "Write Publishing Files", "type": "main", "index": 0 }]] }
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Groq Listing JSON",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Groq Social Copy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Listing JSON": {
+      "main": [
+        [
+          {
+            "node": "Merge Publishing Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Social Copy": {
+      "main": [
+        [
+          {
+            "node": "Merge Publishing Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Publishing Assets": {
+      "main": [
+        [
+          {
+            "node": "Split Files for Writing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Files for Writing": {
+      "main": [
+        [
+          {
+            "node": "Write Publishing Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }

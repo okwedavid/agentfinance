@@ -3,12 +3,17 @@
   "notes": "Generates styled HTML and PDF from markdown using n8n HTML Extract & Write Binary File nodes",
   "nodes": [
     {
-      "parameters": { "isInSubWorkflow": true },
+      "parameters": {
+        "isInSubWorkflow": true
+      },
       "id": "trigger",
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [400, 300]
+      "position": [
+        400,
+        300
+      ]
     },
     {
       "parameters": {
@@ -18,7 +23,10 @@
       "name": "Build Styled HTML",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [600, 300]
+      "position": [
+        600,
+        300
+      ]
     },
     {
       "parameters": {
@@ -32,7 +40,10 @@
       "name": "Write HTML File",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [800, 300]
+      "position": [
+        800,
+        300
+      ]
     },
     {
       "parameters": {
@@ -53,7 +64,10 @@
       "name": "HTML to PDF",
       "type": "n8n-nodes-base.htmlToPdf",
       "typeVersion": 1,
-      "position": [1000, 300]
+      "position": [
+        1000,
+        300
+      ]
     },
     {
       "parameters": {
@@ -65,7 +79,10 @@
       "name": "Write PDF File",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [1200, 300]
+      "position": [
+        1200,
+        300
+      ]
     },
     {
       "parameters": {
@@ -75,14 +92,67 @@
       "name": "Return Base",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1400, 300]
+      "position": [
+        1400,
+        300
+      ]
     }
   ],
   "connections": {
-    "When Executed by Another Workflow": { "main": [[{ "node": "Build Styled HTML", "type": "main", "index": 0 }]] },
-    "Build Styled HTML": { "main": [[{ "node": "Write HTML File", "type": "main", "index": 0 }]] },
-    "Write HTML File": { "main": [[{ "node": "HTML to PDF", "type": "main", "index": 0 }]] },
-    "HTML to PDF": { "main": [[{ "node": "Write PDF File", "type": "main", "index": 0 }]] },
-    "Write PDF File": { "main": [[{ "node": "Return Base", "type": "main", "index": 0 }]] }
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Build Styled HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Styled HTML": {
+      "main": [
+        [
+          {
+            "node": "Write HTML File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write HTML File": {
+      "main": [
+        [
+          {
+            "node": "HTML to PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML to PDF": {
+      "main": [
+        [
+          {
+            "node": "Write PDF File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write PDF File": {
+      "main": [
+        [
+          {
+            "node": "Return Base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }

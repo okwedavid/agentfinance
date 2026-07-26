@@ -2,22 +2,30 @@
   "name": "07 - PACKAGER & COVER",
   "nodes": [
     {
-      "parameters": { "isInSubWorkflow": true },
+      "parameters": {
+        "isInSubWorkflow": true
+      },
       "id": "trigger",
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [400, 300]
+      "position": [
+        400,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const base = $input.item.json;\n// Generate Cover via HTML canvas simulation: create SVG template\nconst svgCover = `\n<svg width='1600' height='1200' viewBox='0 0 1600 1200' xmlns='http://www.w3.org/2000/svg'>\n  <defs><linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'><stop offset='0%' stop-color='#0f172a'/><stop offset='100%' stop-color='#6366f1'/></linearGradient><linearGradient id='acc' x1='0' y1='0' x2='1' y2='0'><stop offset='0%' stop-color='#f59e0b'/><stop offset='100%' stop-color='#ec4899'/></linearGradient></defs>\n  <rect width='1600' height='1200' fill='url(#bg)' rx='40'/>\n  <circle cx='320' cy='240' r='240' fill='#ffffff' opacity='0.05'/>\n  <circle cx='1360' cy='900' r='320' fill='#ffffff' opacity='0.07'/>\n  <rect x='80' y='820' width='1440' height='320' rx='20' fill='#ffffff' opacity='0.95'/>\n  <g transform='translate(120,90)'><rect width='560' height='90' rx='45' fill='url(#acc)'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-family='Inter, sans-serif' font-weight='800' font-size='40' fill='white'>${(base.brand_name||'').slice(0,30)}</text></g>\n  <foreignObject x='128' y='260' width='1344' height='420'><div xmlns='http://www.w3.org/1999/xhtml' style='font-family:Inter,sans-serif;color:white;'><div style='font-size:51px;font-weight:800;line-height:1.1'>${(base.title||'').slice(0,100)}</div><div style='margin-top:16px;font-size:28px;opacity:0.9'>${(base.dream_outcome||'').slice(0,120)}</div></div></foreignObject>\n  <g transform='translate(120,860)'><text x='0' y='0' font-family='Inter' font-weight='700' font-size='28' fill='#0f172a'>✓ Complete OS • ✓ 60+ Prompts • ✓ 30-Day Checklist • ✓ Bonus Vault</text><text x='0' y='70' font-family='Inter' font-weight='500' font-size='25' fill='#64748b'>Premium Digital Product • Instant Download</text></g>\n</svg>`;\nreturn [{ json: { ...base, cover_svg: svgCover } }];"
+        "jsCode": "const base = $input.item.json;\n// Generate Cover via HTML canvas simulation: create SVG template\nconst svgCover = `\n<svg width='1600' height='1200' viewBox='0 0 1600 1200' xmlns='http://www.w3.org/2000/svg'>\n  <defs><linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'><stop offset='0%' stop-color='#0f172a'/><stop offset='100%' stop-color='#6366f1'/></linearGradient><linearGradient id='acc' x1='0' y1='0' x2='1' y2='0'><stop offset='0%' stop-color='#f59e0b'/><stop offset='100%' stop-color='#ec4899'/></linearGradient></defs>\n  <rect width='1600' height='1200' fill='url(#bg)' rx='40'/>\n  <circle cx='320' cy='240' r='240' fill='#ffffff' opacity='0.05'/>\n  <circle cx='1360' cy='900' r='320' fill='#ffffff' opacity='0.07'/>\n  <rect x='80' y='820' width='1440' height='320' rx='20' fill='#ffffff' opacity='0.95'/>\n  <g transform='translate(120,90)'><rect width='560' height='90' rx='45' fill='url(#acc)'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-family='Inter, sans-serif' font-weight='800' font-size='40' fill='white'>${(base.brand_name||'').slice(0,30)}</text></g>\n  <foreignObject x='128' y='260' width='1344' height='420'><div xmlns='http://www.w3.org/1999/xhtml' style='font-family:Inter,sans-serif;color:white;'><div style='font-size:51px;font-weight:800;line-height:1.1'>${(base.title||'').slice(0,100)}</div><div style='margin-top:16px;font-size:28px;opacity:0.9'>${(base.dream_outcome||'').slice(0,120)}</div></div></foreignObject>\n  <g transform='translate(120,860)'><text x='0' y='0' font-family='Inter' font-weight='700' font-size='28' fill='#0f172a'>\u2713 Complete OS \u2022 \u2713 60+ Prompts \u2022 \u2713 30-Day Checklist \u2022 \u2713 Bonus Vault</text><text x='0' y='70' font-family='Inter' font-weight='500' font-size='25' fill='#64748b'>Premium Digital Product \u2022 Instant Download</text></g>\n</svg>`;\nreturn [{ json: { ...base, cover_svg: svgCover } }];"
       },
       "id": "gen-svg",
       "name": "Generate Cover SVG",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [600, 300]
+      "position": [
+        600,
+        300
+      ]
     },
     {
       "parameters": {
@@ -28,17 +36,23 @@
       "name": "Write Cover SVG",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [800, 300]
+      "position": [
+        800,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const base = $input.item.json;\n// Generate README, License, etc for Customer folder using data already present\nconst readme = `# ${base.brand_name}\\n### ${base.title}\\n\\n**Tagline:** ${base.tagline}\\n\\n**Who:** ${base.avatar}\\n\\n**Pain:** ${base.pain}\\n\\n**Outcome:** ${base.dream_outcome}\\n\\n## What's Inside\\n- START_HERE.pdf\\n- User_Guide.pdf\\n- Prompt_Library.pdf\\n- Bonus_Checklist.pdf\\n- Resources.pdf\\n- Bonus.pdf\\n- License.txt\\n- Cover.png\\n\\n## How to Use\\n1. Read START_HERE\\n2. Module 1 quick win\\n3. Prompt Library daily\\n4. Checklist\\n\\n---\\nBrand: ${base.brand_name}\\nPrice: $${base.evaluation?.suggested_price||49}\\n`;\nconst license = `PERSONAL USE LICENSE\\n© 2026 Digital Factory\\n\\nYou may use for own business. No resale/redistribution.\\nSupport: support@yourdomain.com\\n`;\nreturn [{ json: { ...base, readme_content: readme, license_content: license } }];"
+        "jsCode": "const base = $input.item.json;\n// Generate README, License, etc for Customer folder using data already present\nconst readme = `# ${base.brand_name}\\n### ${base.title}\\n\\n**Tagline:** ${base.tagline}\\n\\n**Who:** ${base.avatar}\\n\\n**Pain:** ${base.pain}\\n\\n**Outcome:** ${base.dream_outcome}\\n\\n## What's Inside\\n- START_HERE.pdf\\n- User_Guide.pdf\\n- Prompt_Library.pdf\\n- Bonus_Checklist.pdf\\n- Resources.pdf\\n- Bonus.pdf\\n- License.txt\\n- Cover.png\\n\\n## How to Use\\n1. Read START_HERE\\n2. Module 1 quick win\\n3. Prompt Library daily\\n4. Checklist\\n\\n---\\nBrand: ${base.brand_name}\\nPrice: $${base.evaluation?.suggested_price||49}\\n`;\nconst license = `PERSONAL USE LICENSE\\n\u00a9 2026 Digital Factory\\n\\nYou may use for own business. No resale/redistribution.\\nSupport: support@yourdomain.com\\n`;\nreturn [{ json: { ...base, readme_content: readme, license_content: license } }];"
       },
       "id": "gen-readme",
       "name": "Generate README+License",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1000, 300]
+      "position": [
+        1000,
+        300
+      ]
     },
     {
       "parameters": {
@@ -49,7 +63,10 @@
       "name": "Write README",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [1200, 250]
+      "position": [
+        1200,
+        250
+      ]
     },
     {
       "parameters": {
@@ -60,7 +77,10 @@
       "name": "Write License",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [1200, 400]
+      "position": [
+        1200,
+        400
+      ]
     },
     {
       "parameters": {
@@ -70,7 +90,10 @@
       "name": "ZIP Customer (Use Compression Node)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1400, 300]
+      "position": [
+        1400,
+        300
+      ]
     },
     {
       "parameters": {
@@ -85,7 +108,10 @@
       "name": "Compress to ZIP",
       "type": "n8n-nodes-base.compression",
       "typeVersion": 1,
-      "position": [1600, 300]
+      "position": [
+        1600,
+        300
+      ]
     },
     {
       "parameters": {
@@ -97,17 +123,105 @@
       "name": "Write Published ZIP",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [1800, 300]
+      "position": [
+        1800,
+        300
+      ]
     }
   ],
   "connections": {
-    "When Executed by Another Workflow": { "main": [[{ "node": "Generate Cover SVG", "type": "main", "index": 0 }]] },
-    "Generate Cover SVG": { "main": [[{ "node": "Write Cover SVG", "type": "main", "index": 0 }]] },
-    "Write Cover SVG": { "main": [[{ "node": "Generate README+License", "type": "main", "index": 0 }]] },
-    "Generate README+License": { "main": [[{ "node": "Write README", "type": "main", "index": 0 }, { "node": "Write License", "type": "main", "index": 0 }]] },
-    "Write README": { "main": [[{ "node": "ZIP Customer (Use Compression Node)", "type": "main", "index": 0 }]] },
-    "Write License": { "main": [[{ "node": "ZIP Customer (Use Compression Node)", "type": "main", "index": 0 }]] },
-    "ZIP Customer (Use Compression Node)": { "main": [[{ "node": "Compress to ZIP", "type": "main", "index": 0 }]] },
-    "Compress to ZIP": { "main": [[{ "node": "Write Published ZIP", "type": "main", "index": 0 }]] }
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Generate Cover SVG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Cover SVG": {
+      "main": [
+        [
+          {
+            "node": "Write Cover SVG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Cover SVG": {
+      "main": [
+        [
+          {
+            "node": "Generate README+License",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate README+License": {
+      "main": [
+        [
+          {
+            "node": "Write README",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Write License",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write README": {
+      "main": [
+        [
+          {
+            "node": "ZIP Customer (Use Compression Node)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write License": {
+      "main": [
+        [
+          {
+            "node": "ZIP Customer (Use Compression Node)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ZIP Customer (Use Compression Node)": {
+      "main": [
+        [
+          {
+            "node": "Compress to ZIP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compress to ZIP": {
+      "main": [
+        [
+          {
+            "node": "Write Published ZIP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }

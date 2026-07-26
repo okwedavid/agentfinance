@@ -3,12 +3,17 @@
   "notes": "Publishes to Gumroad, Shopify, Etsy, WooCommerce, Payhip, Ko-fi, LemonSqueezy via HTTP Request nodes. Configure credentials.",
   "nodes": [
     {
-      "parameters": { "isInSubWorkflow": true },
+      "parameters": {
+        "isInSubWorkflow": true
+      },
       "id": "trigger",
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [400, 300]
+      "position": [
+        400,
+        300
+      ]
     },
     {
       "parameters": {
@@ -18,7 +23,10 @@
       "name": "Set Paths",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [600, 300]
+      "position": [
+        600,
+        300
+      ]
     },
     {
       "parameters": {
@@ -31,7 +39,10 @@
           "conditions": [
             {
               "leftValue": "={{ $env.GUMROAD_ACCESS_TOKEN !== '' }}",
-              "operator": { "type": "boolean", "operation": "true" },
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
               "rightValue": ""
             }
           ]
@@ -41,7 +52,10 @@
       "name": "IF Gumroad Enabled",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [800, 200]
+      "position": [
+        800,
+        200
+      ]
     },
     {
       "parameters": {
@@ -49,10 +63,22 @@
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "name", "value": "={{ $json.brand_name }} - {{ $json.title }}" },
-            { "name": "custom_summary", "value": "={{ $json.short_description || $json.tagline }}" },
-            { "name": "price", "value": "={{ $json.evaluation.suggested_price || 49 }}" },
-            { "name": "access_token", "value": "={{ $env.GUMROAD_ACCESS_TOKEN }}" }
+            {
+              "name": "name",
+              "value": "={{ $json.brand_name }} - {{ $json.title }}"
+            },
+            {
+              "name": "custom_summary",
+              "value": "={{ $json.short_description || $json.tagline }}"
+            },
+            {
+              "name": "price",
+              "value": "={{ $json.evaluation.suggested_price || 49 }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.GUMROAD_ACCESS_TOKEN }}"
+            }
           ]
         },
         "options": {}
@@ -61,7 +87,10 @@
       "name": "Gumroad Create Product",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1000, 100]
+      "position": [
+        1000,
+        100
+      ]
     },
     {
       "parameters": {
@@ -74,7 +103,10 @@
           "conditions": [
             {
               "leftValue": "={{ $env.SHOPIFY_STORE_DOMAIN !== '' }}",
-              "operator": { "type": "boolean", "operation": "true" },
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
               "rightValue": ""
             }
           ]
@@ -84,7 +116,10 @@
       "name": "IF Shopify Enabled",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [800, 400]
+      "position": [
+        800,
+        400
+      ]
     },
     {
       "parameters": {
@@ -106,7 +141,10 @@
       "name": "Shopify Create Product",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1000, 400]
+      "position": [
+        1000,
+        400
+      ]
     },
     {
       "parameters": {
@@ -117,8 +155,16 @@
       "name": "Etsy Create Listing (OAuth Node)",
       "type": "n8n-nodes-base.etsy",
       "typeVersion": 1,
-      "position": [1000, 600],
-      "credentials": { "etsyApi": { "id": "etsy-oauth", "name": "Etsy OAuth" } }
+      "position": [
+        1000,
+        600
+      ],
+      "credentials": {
+        "etsyApi": {
+          "id": "etsy-oauth",
+          "name": "Etsy OAuth"
+        }
+      }
     },
     {
       "parameters": {
@@ -126,18 +172,39 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "consumer_key", "value": "={{ $env.WOOCOMMERCE_CONSUMER_KEY }}" },
-            { "name": "consumer_secret", "value": "={{ $env.WOOCOMMERCE_CONSUMER_SECRET }}" }
+            {
+              "name": "consumer_key",
+              "value": "={{ $env.WOOCOMMERCE_CONSUMER_KEY }}"
+            },
+            {
+              "name": "consumer_secret",
+              "value": "={{ $env.WOOCOMMERCE_CONSUMER_SECRET }}"
+            }
           ]
         },
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "name", "value": "={{ $json.title }}" },
-            { "name": "type", "value": "simple" },
-            { "name": "regular_price", "value": "={{ $json.evaluation.suggested_price }}" },
-            { "name": "virtual", "value": true },
-            { "name": "downloadable", "value": true }
+            {
+              "name": "name",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "type",
+              "value": "simple"
+            },
+            {
+              "name": "regular_price",
+              "value": "={{ $json.evaluation.suggested_price }}"
+            },
+            {
+              "name": "virtual",
+              "value": true
+            },
+            {
+              "name": "downloadable",
+              "value": true
+            }
           ]
         }
       },
@@ -145,7 +212,10 @@
       "name": "WooCommerce Create",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1000, 800]
+      "position": [
+        1000,
+        800
+      ]
     },
     {
       "parameters": {
@@ -155,22 +225,97 @@
       "name": "Log Other Platforms",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1400, 400]
+      "position": [
+        1400,
+        400
+      ]
     }
   ],
   "connections": {
-    "When Executed by Another Workflow": { "main": [[{ "node": "Set Paths", "type": "main", "index": 0 }]] },
-    "Set Paths": {
-      "main": [[{ "node": "IF Gumroad Enabled", "type": "main", "index": 0 }, { "node": "IF Shopify Enabled", "type": "main", "index": 0 }]]
-    },
-    "IF Gumroad Enabled": { "main": [[{ "node": "Gumroad Create Product", "type": "main", "index": 0 }], [{ "node": "Log Other Platforms", "type": "main", "index": 0 }]] },
-    "IF Shopify Enabled": {
+    "When Executed by Another Workflow": {
       "main": [
-        [{ "node": "Shopify Create Product", "type": "main", "index": 0 }],
-        [{ "node": "Etsy Create Listing (OAuth Node)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Set Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Shopify Create Product": { "main": [[{ "node": "WooCommerce Create", "type": "main", "index": 0 }]] },
-    "Etsy Create Listing (OAuth Node)": { "main": [[{ "node": "Log Other Platforms", "type": "main", "index": 0 }]] }
+    "Set Paths": {
+      "main": [
+        [
+          {
+            "node": "IF Gumroad Enabled",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Shopify Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Gumroad Enabled": {
+      "main": [
+        [
+          {
+            "node": "Gumroad Create Product",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Other Platforms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Shopify Enabled": {
+      "main": [
+        [
+          {
+            "node": "Shopify Create Product",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Etsy Create Listing (OAuth Node)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shopify Create Product": {
+      "main": [
+        [
+          {
+            "node": "WooCommerce Create",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Etsy Create Listing (OAuth Node)": {
+      "main": [
+        [
+          {
+            "node": "Log Other Platforms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }

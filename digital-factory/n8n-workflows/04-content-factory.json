@@ -2,20 +2,41 @@
   "name": "04 - CONTENT FACTORY (Parallel)",
   "nodes": [
     {
-      "parameters": { "isInSubWorkflow": true },
+      "parameters": {
+        "isInSubWorkflow": true
+      },
       "id": "trigger",
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [360, 300]
+      "position": [
+        360,
+        300
+      ]
     },
     {
-      "parameters": { "mode": "combine", "mergeByFields": { "values": [{ "field1": "slug", "field2": "slug" }] }, "options": { "multipleMatches": "first" } },
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "slug",
+              "field2": "slug"
+            }
+          ]
+        },
+        "options": {
+          "multipleMatches": "first"
+        }
+      },
       "id": "split",
       "name": "Split Into 5 Parallel",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [580, 300]
+      "position": [
+        580,
+        300
+      ]
     },
     {
       "parameters": {
@@ -23,19 +44,45 @@
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "model", "value": "llama-3.3-70b-versatile" },
-            { "name": "temperature", "value": 0.75 },
-            { "name": "max_tokens", "value": 6000 },
-            { "name": "messages", "value": "= [{\"role\":\"system\",\"content\":\"You are premium digital product author. Write $99-worthy guide. No fluff like 'in fast-paced world'. Tactical, frameworks, templates, actionable. 2500-3500 words, markdown.\"},{\"role\":\"user\",\"content\":\"Write MAIN GUIDE for: {{$json.title}} Brand: {{$json.brand_name}} Outcome: {{$json.dream_outcome}} Avatar: {{$json.avatar}} Pain: {{$json.pain}} Modules: {{JSON.stringify($json.core_modules)}} Differentiation: {{$json.differentiation}}. Structure: # Brand - Complete OS, Quick Win, Module 1-6 with Why, Framework, Template, Action Steps, 30-Day Roadmap, Troubleshooting.\"}]" }
+            {
+              "name": "model",
+              "value": "llama-3.3-70b-versatile"
+            },
+            {
+              "name": "temperature",
+              "value": 0.75
+            },
+            {
+              "name": "max_tokens",
+              "value": 6000
+            },
+            {
+              "name": "messages",
+              "value": "= [{\"role\":\"system\",\"content\":\"You are premium digital product author. Write $99-worthy guide. No fluff like 'in fast-paced world'. Tactical, frameworks, templates, actionable. 2500-3500 words, markdown.\"},{\"role\":\"user\",\"content\":\"Write MAIN GUIDE for: {{$json.title}} Brand: {{$json.brand_name}} Outcome: {{$json.dream_outcome}} Avatar: {{$json.avatar}} Pain: {{$json.pain}} Modules: {{JSON.stringify($json.core_modules)}} Differentiation: {{$json.differentiation}}. Structure: # Brand - Complete OS, Quick Win, Module 1-6 with Why, Framework, Template, Action Steps, 30-Day Roadmap, Troubleshooting.\"}]"
+            }
           ]
+        },
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
         }
       },
       "id": "groq-guide",
       "name": "Groq Guide",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [800, 100],
-      "credentials": { "httpHeaderAuth": { "id": "groq-api-key", "name": "Groq Auth" } }
+      "position": [
+        800,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -43,19 +90,45 @@
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "model", "value": "llama-3.3-70b-versatile" },
-            { "name": "temperature", "value": 0.8 },
-            { "name": "max_tokens", "value": 7000 },
-            { "name": "messages", "value": "= [{\"role\":\"system\",\"content\":\"You are prompt engineer. Create 60+ copy-paste prompts with variables [NICHE] etc. Organize by use-case. Markdown.\"},{\"role\":\"user\",\"content\":\"Create Prompt Library for {{$json.brand_name}} Outcome: {{$json.dream_outcome}} Avatar: {{$json.avatar}} Modules: {{JSON.stringify($json.core_modules)}}. Structure: # Prompt Library 60+ Prompts, Category 1-6 each 10 prompts with Use Case, Prompt code block, Pro Tip.\"}]" }
+            {
+              "name": "model",
+              "value": "llama-3.3-70b-versatile"
+            },
+            {
+              "name": "temperature",
+              "value": 0.8
+            },
+            {
+              "name": "max_tokens",
+              "value": 7000
+            },
+            {
+              "name": "messages",
+              "value": "= [{\"role\":\"system\",\"content\":\"You are prompt engineer. Create 60+ copy-paste prompts with variables [NICHE] etc. Organize by use-case. Markdown.\"},{\"role\":\"user\",\"content\":\"Create Prompt Library for {{$json.brand_name}} Outcome: {{$json.dream_outcome}} Avatar: {{$json.avatar}} Modules: {{JSON.stringify($json.core_modules)}}. Structure: # Prompt Library 60+ Prompts, Category 1-6 each 10 prompts with Use Case, Prompt code block, Pro Tip.\"}]"
+            }
           ]
+        },
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
         }
       },
       "id": "groq-prompts",
       "name": "Groq Prompts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [800, 300],
-      "credentials": { "httpHeaderAuth": { "id": "groq-api-key", "name": "Groq Auth" } }
+      "position": [
+        800,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -63,18 +136,41 @@
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "model", "value": "llama-3.1-8b-instant" },
-            { "name": "temperature", "value": 0.6 },
-            { "name": "messages", "value": "= [{\"role\":\"system\",\"content\":\"Create premium checklist. Markdown checkbox [ ] 30-50 items, 3 phases.\"},{\"role\":\"user\",\"content\":\"Create Checklist for {{$json.brand_name}} Outcome: {{$json.dream_outcome}} Avatar: {{$json.avatar}} 30-50 items in phases Setup Day1-3, Execution Day4-21, Scale Day22-30 plus Quick Wins.\"}]" }
+            {
+              "name": "model",
+              "value": "llama-3.1-8b-instant"
+            },
+            {
+              "name": "temperature",
+              "value": 0.6
+            },
+            {
+              "name": "messages",
+              "value": "= [{\"role\":\"system\",\"content\":\"Create premium checklist. Markdown checkbox [ ] 30-50 items, 3 phases.\"},{\"role\":\"user\",\"content\":\"Create Checklist for {{$json.brand_name}} Outcome: {{$json.dream_outcome}} Avatar: {{$json.avatar}} 30-50 items in phases Setup Day1-3, Execution Day4-21, Scale Day22-30 plus Quick Wins.\"}]"
+            }
           ]
+        },
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
         }
       },
       "id": "groq-checklist",
       "name": "Groq Checklist",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [800, 500],
-      "credentials": { "httpHeaderAuth": { "id": "groq-api-key", "name": "Groq Auth" } }
+      "position": [
+        800,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -82,18 +178,41 @@
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "model", "value": "llama-3.1-8b-instant" },
-            { "name": "temperature", "value": 0.6 },
-            { "name": "messages", "value": "= [{\"role\":\"system\",\"content\":\"You curate tools, templates, resources. Real tool names.\"},{\"role\":\"user\",\"content\":\"Create Resources vault for {{$json.brand_name}} Avatar: {{$json.avatar}} Title: {{$json.title}} Structure: Essential Tools, Templates, Communities, Books, AI Stack, Bonus Discounts.\"}]" }
+            {
+              "name": "model",
+              "value": "llama-3.1-8b-instant"
+            },
+            {
+              "name": "temperature",
+              "value": 0.6
+            },
+            {
+              "name": "messages",
+              "value": "= [{\"role\":\"system\",\"content\":\"You curate tools, templates, resources. Real tool names.\"},{\"role\":\"user\",\"content\":\"Create Resources vault for {{$json.brand_name}} Avatar: {{$json.avatar}} Title: {{$json.title}} Structure: Essential Tools, Templates, Communities, Books, AI Stack, Bonus Discounts.\"}]"
+            }
           ]
+        },
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
         }
       },
       "id": "groq-resources",
       "name": "Groq Resources",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [800, 700],
-      "credentials": { "httpHeaderAuth": { "id": "groq-api-key", "name": "Groq Auth" } }
+      "position": [
+        800,
+        700
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -101,18 +220,41 @@
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "model", "value": "llama-3.1-8b-instant" },
-            { "name": "temperature", "value": 0.7 },
-            { "name": "messages", "value": "= [{\"role\":\"system\",\"content\":\"You create bonus increasing perceived value 2x. Tactical.\"},{\"role\":\"user\",\"content\":\"Create BONUS for {{$json.brand_name}} Should be 7-Day Quick Start + 3 case studies (realistic). Avatar: {{$json.avatar}} Outcome: {{$json.dream_outcome}}\"}]" }
+            {
+              "name": "model",
+              "value": "llama-3.1-8b-instant"
+            },
+            {
+              "name": "temperature",
+              "value": 0.7
+            },
+            {
+              "name": "messages",
+              "value": "= [{\"role\":\"system\",\"content\":\"You create bonus increasing perceived value 2x. Tactical.\"},{\"role\":\"user\",\"content\":\"Create BONUS for {{$json.brand_name}} Should be 7-Day Quick Start + 3 case studies (realistic). Avatar: {{$json.avatar}} Outcome: {{$json.dream_outcome}}\"}]"
+            }
           ]
+        },
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
         }
       },
       "id": "groq-bonus",
       "name": "Groq Bonus",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [800, 900],
-      "credentials": { "httpHeaderAuth": { "id": "groq-api-key", "name": "Groq Auth" } }
+      "position": [
+        800,
+        900
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -122,23 +264,106 @@
       "name": "Merge All Content",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, 400]
+      "position": [
+        1200,
+        400
+      ]
     }
   ],
   "connections": {
     "When Executed by Another Workflow": {
       "main": [
-        [{ "node": "Groq Guide", "type": "main", "index": 0 }],
-        [{ "node": "Groq Prompts", "type": "main", "index": 0 }],
-        [{ "node": "Groq Checklist", "type": "main", "index": 0 }],
-        [{ "node": "Groq Resources", "type": "main", "index": 0 }],
-        [{ "node": "Groq Bonus", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Groq Guide",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Checklist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Resources",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Bonus",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Groq Guide": { "main": [[{ "node": "Merge All Content", "type": "main", "index": 0 }]] },
-    "Groq Prompts": { "main": [[{ "node": "Merge All Content", "type": "main", "index": 0 }]] },
-    "Groq Checklist": { "main": [[{ "node": "Merge All Content", "type": "main", "index": 0 }]] },
-    "Groq Resources": { "main": [[{ "node": "Merge All Content", "type": "main", "index": 0 }]] },
-    "Groq Bonus": { "main": [[{ "node": "Merge All Content", "type": "main", "index": 0 }]] }
+    "Groq Guide": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Prompts": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Checklist": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Resources": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Bonus": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }

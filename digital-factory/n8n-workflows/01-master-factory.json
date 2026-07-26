@@ -17,7 +17,10 @@
       "name": "Schedule Daily Batch",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [460, 300]
+      "position": [
+        460,
+        300
+      ]
     },
     {
       "parameters": {
@@ -28,7 +31,10 @@
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [460, 500]
+      "position": [
+        460,
+        500
+      ]
     },
     {
       "parameters": {
@@ -54,7 +60,10 @@
       "name": "Set Factory Config",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [680, 400]
+      "position": [
+        680,
+        400
+      ]
     },
     {
       "parameters": {
@@ -69,7 +78,10 @@
       "name": "Idea Generator Sub-Workflow",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
-      "position": [900, 400]
+      "position": [
+        900,
+        400
+      ]
     },
     {
       "parameters": {
@@ -84,7 +96,10 @@
       "name": "Evaluator Gate",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
-      "position": [1120, 400]
+      "position": [
+        1120,
+        400
+      ]
     },
     {
       "parameters": {
@@ -120,7 +135,10 @@
       "name": "IF Approved?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1320, 400]
+      "position": [
+        1320,
+        400
+      ]
     },
     {
       "parameters": {
@@ -135,7 +153,10 @@
       "name": "Content Factory (Parallel)",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
-      "position": [1540, 300]
+      "position": [
+        1540,
+        300
+      ]
     },
     {
       "parameters": {
@@ -150,7 +171,10 @@
       "name": "HTML & PDF Generator",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
-      "position": [1760, 300]
+      "position": [
+        1760,
+        300
+      ]
     },
     {
       "parameters": {
@@ -165,7 +189,10 @@
       "name": "Publishing Assets Generator",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
-      "position": [1980, 300]
+      "position": [
+        1980,
+        300
+      ]
     },
     {
       "parameters": {
@@ -180,7 +207,10 @@
       "name": "Packager + Cover + ZIP",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
-      "position": [2200, 300]
+      "position": [
+        2200,
+        300
+      ]
     },
     {
       "parameters": {
@@ -195,11 +225,14 @@
       "name": "Publish to Gumroad/Etsy/Shopify",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
-      "position": [2420, 300]
+      "position": [
+        2420,
+        300
+      ]
     },
     {
       "parameters": {
-        "content": "## ✅ Product Factory Completed\n\n**Product:** {{ $json.brand_name }} | {{ $json.slug }}\n**Price:** ${{ $json.price }}\n**Score:** {{ $json.overall }}/10\n**Files:** Customer/, Publishing/, Internal/\n\nNext: Check C:\\DigitalFactory\\Products\\{{ $json.slug }}\n\nNow publishing to ecommerce automatically...",
+        "content": "## \u2705 Product Factory Completed\n\n**Product:** {{ $json.brand_name }} | {{ $json.slug }}\n**Price:** ${{ $json.price }}\n**Score:** {{ $json.overall }}/10\n**Files:** Customer/, Publishing/, Internal/\n\nNext: Check C:\\DigitalFactory\\Products\\{{ $json.slug }}\n\nNow publishing to ecommerce automatically...",
         "height": 400,
         "width": 600
       },
@@ -207,25 +240,124 @@
       "name": "Success Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [2400, 600]
+      "position": [
+        2400,
+        600
+      ]
     }
   ],
   "connections": {
-    "Schedule Daily Batch": { "main": [[{ "node": "Set Factory Config", "type": "main", "index": 0 }]] },
-    "Manual Trigger": { "main": [[{ "node": "Set Factory Config", "type": "main", "index": 0 }]] },
-    "Set Factory Config": { "main": [[{ "node": "Idea Generator Sub-Workflow", "type": "main", "index": 0 }]] },
-    "Idea Generator Sub-Workflow": { "main": [[{ "node": "Evaluator Gate", "type": "main", "index": 0 }]] },
-    "Evaluator Gate": { "main": [[{ "node": "IF Approved?", "type": "main", "index": 0 }]] },
+    "Schedule Daily Batch": {
+      "main": [
+        [
+          {
+            "node": "Set Factory Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Factory Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Factory Config": {
+      "main": [
+        [
+          {
+            "node": "Idea Generator Sub-Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idea Generator Sub-Workflow": {
+      "main": [
+        [
+          {
+            "node": "Evaluator Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluator Gate": {
+      "main": [
+        [
+          {
+            "node": "IF Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "IF Approved?": {
       "main": [
-        [{ "node": "Content Factory (Parallel)", "type": "main", "index": 0 }],
+        [
+          {
+            "node": "Content Factory (Parallel)",
+            "type": "main",
+            "index": 0
+          }
+        ],
         []
       ]
     },
-    "Content Factory (Parallel)": { "main": [[{ "node": "HTML & PDF Generator", "type": "main", "index": 0 }]] },
-    "HTML & PDF Generator": { "main": [[{ "node": "Publishing Assets Generator", "type": "main", "index": 0 }]] },
-    "Publishing Assets Generator": { "main": [[{ "node": "Packager + Cover + ZIP", "type": "main", "index": 0 }]] },
-    "Packager + Cover + ZIP": { "main": [[{ "node": "Publish to Gumroad/Etsy/Shopify", "type": "main", "index": 0 }]] }
+    "Content Factory (Parallel)": {
+      "main": [
+        [
+          {
+            "node": "HTML & PDF Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML & PDF Generator": {
+      "main": [
+        [
+          {
+            "node": "Publishing Assets Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publishing Assets Generator": {
+      "main": [
+        [
+          {
+            "node": "Packager + Cover + ZIP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Packager + Cover + ZIP": {
+      "main": [
+        [
+          {
+            "node": "Publish to Gumroad/Etsy/Shopify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "pinData": {},
   "meta": {

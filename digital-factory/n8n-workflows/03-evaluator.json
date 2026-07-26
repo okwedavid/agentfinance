@@ -9,7 +9,10 @@
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [460, 300]
+      "position": [
+        460,
+        300
+      ]
     },
     {
       "parameters": {
@@ -17,24 +20,44 @@
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
-            { "name": "model", "value": "llama-3.1-8b-instant" },
-            { "name": "temperature", "value": 0.3 },
-            { "name": "response_format", "value": "={\"type\":\"json_object\"}" },
+            {
+              "name": "model",
+              "value": "llama-3.1-8b-instant"
+            },
+            {
+              "name": "temperature",
+              "value": 0.3
+            },
+            {
+              "name": "response_format",
+              "value": "={\"type\":\"json_object\"}"
+            },
             {
               "name": "messages",
               "value": "= [{\"role\":\"system\",\"content\":\"You are ruthless product evaluator for Gumroad/Etsy. Score 1-10: Demand, Competition (10=low comp), Value, Price, Confidence. Overall=avg. APPROVED if >=7. Output JSON only.\"},{\"role\":\"user\",\"content\":\"Evaluate: Title: {{$json.title}} Brand: {{$json.brand_name}} Avatar: {{$json.avatar}} Pain: {{$json.pain}} Outcome: {{$json.dream_outcome}} Price: {{$json.price_point}} Modules: {{JSON.stringify($json.core_modules)}}. Return JSON: {demand_score, competition_score, value_score, price_score, market_confidence, overall, verdict APPROVED/REJECTED, reason, suggested_price, price_tiers:{basic,standard,premium}, target_audience_detailed, improvement_tips[], risk_flags[]}\"}]"
             }
           ]
         },
-        "options": {}
+        "options": {
+          "bodyContentType": "json"
+        },
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth"
       },
       "id": "groq-eval",
       "name": "Groq Evaluator (Fast Model)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [680, 300],
+      "position": [
+        680,
+        300
+      ],
       "credentials": {
-        "httpHeaderAuth": { "id": "groq-api-key", "name": "Groq Auth" }
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
       }
     },
     {
@@ -45,7 +68,10 @@
       "name": "Merge Idea + Evaluation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [900, 300]
+      "position": [
+        900,
+        300
+      ]
     },
     {
       "parameters": {
@@ -58,11 +84,34 @@
       "name": "Log Evaluation",
       "type": "n8n-nodes-base.writeBinaryFile",
       "typeVersion": 1,
-      "position": [1120, 500]
+      "position": [
+        1120,
+        500
+      ]
     }
   ],
   "connections": {
-    "When Executed by Another Workflow": { "main": [[{ "node": "Groq Evaluator (Fast Model)", "type": "main", "index": 0 }]] },
-    "Groq Evaluator (Fast Model)": { "main": [[{ "node": "Merge Idea + Evaluation", "type": "main", "index": 0 }]] }
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Groq Evaluator (Fast Model)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Evaluator (Fast Model)": {
+      "main": [
+        [
+          {
+            "node": "Merge Idea + Evaluation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }
