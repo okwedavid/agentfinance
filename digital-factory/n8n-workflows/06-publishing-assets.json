@@ -99,7 +99,9 @@
     {
       "parameters": {
         "filePath": "=C:/DigitalFactory/Products/{{$json.slug}}/Publishing/{{$json.filename}}",
-        "options": {}
+        "options": {},
+        "operation": "write",
+        "fileContent": "={{ $json.content }}"
       },
       "id": "write-publishing",
       "name": "Write Publishing Files",

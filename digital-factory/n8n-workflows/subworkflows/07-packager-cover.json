@@ -30,7 +30,9 @@
     {
       "parameters": {
         "filePath": "=C:/DigitalFactory/Products/{{$json.slug}}/Customer/Cover.svg",
-        "options": {}
+        "options": {},
+        "operation": "write",
+        "fileContent": "={{ $json.content }}"
       },
       "id": "write-svg",
       "name": "Write Cover SVG",
@@ -57,7 +59,9 @@
     {
       "parameters": {
         "filePath": "=C:/DigitalFactory/Products/{{$json.slug}}/Customer/README.md",
-        "options": {}
+        "options": {},
+        "operation": "write",
+        "fileContent": "={{ $json.content }}"
       },
       "id": "write-readme",
       "name": "Write README",
@@ -71,7 +75,9 @@
     {
       "parameters": {
         "filePath": "=C:/DigitalFactory/Products/{{$json.slug}}/Customer/License.txt",
-        "options": {}
+        "options": {},
+        "operation": "write",
+        "fileContent": "={{ $json.content }}"
       },
       "id": "write-license",
       "name": "Write License",
@@ -117,7 +123,9 @@
       "parameters": {
         "filePath": "=C:/DigitalFactory/Published/{{$json.slug}}/{{$json.slug}}.zip",
         "binaryPropertyName": "data",
-        "options": {}
+        "options": {},
+        "operation": "write",
+        "fileContent": "={{ $json.content }}"
       },
       "id": "write-zip",
       "name": "Write Published ZIP",

@@ -34,7 +34,9 @@
         "binaryPropertyName": "data",
         "options": {
           "append": false
-        }
+        },
+        "operation": "write",
+        "fileContent": "={{ $json.content }}"
       },
       "id": "write-html",
       "name": "Write HTML File",
@@ -73,7 +75,9 @@
       "parameters": {
         "filePath": "=C:/DigitalFactory/Products/{{$json.slug}}/Customer/{{$json.file_name}}.pdf",
         "binaryPropertyName": "data",
-        "options": {}
+        "options": {},
+        "operation": "write",
+        "fileContent": "={{ $json.content }}"
       },
       "id": "write-pdf",
       "name": "Write PDF File",
