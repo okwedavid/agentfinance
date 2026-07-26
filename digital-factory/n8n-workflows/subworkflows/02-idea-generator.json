@@ -39,7 +39,7 @@
         },
         "method": "POST",
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.9,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product strategist. Generate OUTCOME-driven products, NOT toolkits. Brandable name with \u2122. JSON only.\"},\n    {\"role\": \"user\", \"content\": \"Generate ONE premium product for niche: \" + $json.niche_hint + \". Return JSON with: slug (kebab), brand_name with \u2122, title (outcome measurable), outcome, tagline, avatar specific, pain, dream_outcome, core_modules[6-8 outcomes], deliverables[], differentiation why not generic slop, price_point, price_reason, bundle_with[], keywords[10], est_demand, competition_level\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.9,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product strategist. Generate OUTCOME-driven products, NOT toolkits. Brandable name with \u2122. JSON only.\"},\n    {\"role\": \"user\", \"content\": \"Generate ONE premium product for niche: {{$json.niche_hint}}. Return JSON with: slug (kebab), brand_name with \u2122, title (outcome measurable), outcome, tagline, avatar specific, pain, dream_outcome, core_modules[6-8 outcomes], deliverables[], differentiation why not generic slop, price_point, price_reason, bundle_with[], keywords[10], est_demand, competition_level\"}\n  ]\n}"
       },
       "id": "groq-idea",
       "name": "Groq Idea Generation",

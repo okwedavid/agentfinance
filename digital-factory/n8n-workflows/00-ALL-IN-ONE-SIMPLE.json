@@ -85,7 +85,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.9,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product strategist. Generate OUTCOME-driven products, NOT toolkits. Brandable name with \u2122. JSON only.\"},\n    {\"role\": \"user\", \"content\": \"Generate ONE premium product for niche: \" + $json.niche_hint + \". Return JSON with: slug (kebab), brand_name with \u2122, title (outcome measurable), outcome, tagline, avatar specific, pain, dream_outcome, core_modules[6-8 outcomes], deliverables[], differentiation why not generic slop, price_point, price_reason, bundle_with[], keywords[10], est_demand, competition_level\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.9,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product strategist. Generate OUTCOME-driven products, NOT toolkits. Brandable name with \u2122. JSON only.\"},\n    {\"role\": \"user\", \"content\": \"Generate ONE premium product for niche: {{$json.niche_hint}}. Return JSON with: slug (kebab), brand_name with \u2122, title (outcome measurable), outcome, tagline, avatar specific, pain, dream_outcome, core_modules[6-8 outcomes], deliverables[], differentiation why not generic slop, price_point, price_reason, bundle_with[], keywords[10], est_demand, competition_level\"}\n  ]\n}"
       },
       "id": "groq-idea",
       "name": "Groq Idea Generation",
@@ -126,7 +126,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.3,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are ruthless product evaluator for Gumroad/Etsy. Score 1-10 Demand, Competition (10=low good), Value, Price, Confidence. Overall avg. APPROVED if >=7. JSON only.\"},\n    {\"role\": \"user\", \"content\": \"Evaluate Title: \" + $json.title + \" Brand: \" + $json.brand_name + \" Avatar: \" + $json.avatar + \" Pain: \" + $json.pain + \" Outcome: \" + $json.dream_outcome + \" Price: \" + $json.price_point + \" Modules: \" + JSON.stringify($json.core_modules) + \". Return JSON: {demand_score, competition_score, value_score, price_score, market_confidence, overall, verdict APPROVED/REJECTED, reason, suggested_price, price_tiers:{basic,standard,premium}}\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.3,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are ruthless product evaluator for Gumroad/Etsy. Score 1-10 Demand, Competition (10=low good), Value, Price, Confidence. Overall avg. APPROVED if >=7. JSON only.\"},\n    {\"role\": \"user\", \"content\": \"Evaluate Title: {{$json.title}} Brand: {{$json.brand_name}} Avatar: {{$json.avatar}} Pain: {{$json.pain}} Outcome: {{$json.dream_outcome}} Price: {{$json.price_point}} Modules: {{JSON.stringify($json.core_modules)}}. Return JSON: {demand_score, competition_score, value_score, price_score, market_confidence, overall, verdict APPROVED/REJECTED, reason, suggested_price, price_tiers:{basic,standard,premium}}\"}\n  ]\n}"
       },
       "id": "groq-eval",
       "name": "Groq Evaluator",
@@ -191,7 +191,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.75,\n  \"max_tokens\": 5000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product author. Write $99-worthy guide 2500-3500w tactical frameworks, no fluff 'in fast-paced world'. Markdown.\"},\n    {\"role\": \"user\", \"content\": \"Write MAIN GUIDE for \" + $json.title + \" Brand \" + $json.brand_name + \" Outcome \" + $json.dream_outcome + \" Avatar \" + $json.avatar + \" Pain \" + $json.pain + \" Modules \" + JSON.stringify($json.core_modules) + \" Differentiation \" + $json.differentiation + \". Structure Quick Win, Module1-6 with Why,Framework,Template,Action Steps, 30-Day Roadmap, Troubleshooting.\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.75,\n  \"max_tokens\": 5000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product author. Write $99-worthy guide 2500-3500w tactical frameworks, no fluff 'in fast-paced world'. Markdown.\"},\n    {\"role\": \"user\", \"content\": \"Write MAIN GUIDE for {{$json.title}} Brand {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Pain {{$json.pain}} Modules {{JSON.stringify($json.core_modules)}} Differentiation {{$json.differentiation}}. Structure Quick Win, Module1-6 with Why,Framework,Template,Action Steps, 30-Day Roadmap, Troubleshooting.\"}\n  ]\n}"
       },
       "id": "groq-guide",
       "name": "Groq Guide",
@@ -219,7 +219,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.6,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"Create premium checklist markdown checkboxes [ ] 30-50 items 3 phases.\"},\n    {\"role\": \"user\", \"content\": \"Create Checklist for \" + $json.brand_name + \" Outcome \" + $json.dream_outcome + \" Avatar \" + $json.avatar + \" Phases Setup Day1-3, Execution Day4-21, Scale Day22-30 plus Quick Wins.\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.6,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"Create premium checklist markdown checkboxes [ ] 30-50 items 3 phases.\"},\n    {\"role\": \"user\", \"content\": \"Create Checklist for {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Phases Setup Day1-3, Execution Day4-21, Scale Day22-30 plus Quick Wins.\"}\n  ]\n}"
       },
       "id": "groq-checklist",
       "name": "Groq Checklist",

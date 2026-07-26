@@ -49,7 +49,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.75,\n  \"max_tokens\": 5000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product author. Write $99-worthy guide 2500-3500w tactical frameworks, no fluff 'in fast-paced world'. Markdown.\"},\n    {\"role\": \"user\", \"content\": \"Write MAIN GUIDE for \" + $json.title + \" Brand \" + $json.brand_name + \" Outcome \" + $json.dream_outcome + \" Avatar \" + $json.avatar + \" Pain \" + $json.pain + \" Modules \" + JSON.stringify($json.core_modules) + \" Differentiation \" + $json.differentiation + \". Structure Quick Win, Module1-6 with Why,Framework,Template,Action Steps, 30-Day Roadmap, Troubleshooting.\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.75,\n  \"max_tokens\": 5000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product author. Write $99-worthy guide 2500-3500w tactical frameworks, no fluff 'in fast-paced world'. Markdown.\"},\n    {\"role\": \"user\", \"content\": \"Write MAIN GUIDE for {{$json.title}} Brand {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Pain {{$json.pain}} Modules {{JSON.stringify($json.core_modules)}} Differentiation {{$json.differentiation}}. Structure Quick Win, Module1-6 with Why,Framework,Template,Action Steps, 30-Day Roadmap, Troubleshooting.\"}\n  ]\n}"
       },
       "id": "groq-guide",
       "name": "Groq Guide",
@@ -77,7 +77,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 6000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are prompt engineer 60+ copy-paste prompts variables [NICHE]. Markdown organized by use-case.\"},\n    {\"role\": \"user\", \"content\": \"Create Prompt Library for \" + $json.brand_name + \" Outcome \" + $json.dream_outcome + \" Avatar \" + $json.avatar + \" Modules \" + JSON.stringify($json.core_modules) + \". 6 categories 10 prompts each with Use Case, Prompt code block, Pro Tip.\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 6000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are prompt engineer 60+ copy-paste prompts variables [NICHE]. Markdown organized by use-case.\"},\n    {\"role\": \"user\", \"content\": \"Create Prompt Library for {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Modules {{JSON.stringify($json.core_modules)}}. 6 categories 10 prompts each with Use Case, Prompt code block, Pro Tip.\"}\n  ]\n}"
       },
       "id": "groq-prompts",
       "name": "Groq Prompts",
@@ -105,7 +105,7 @@
           "bodyContentType": "json"
         },
         "specifyBody": "json",
-        "jsonBody": "= {\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.6,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"Create premium checklist markdown checkboxes [ ] 30-50 items 3 phases.\"},\n    {\"role\": \"user\", \"content\": \"Create Checklist for \" + $json.brand_name + \" Outcome \" + $json.dream_outcome + \" Avatar \" + $json.avatar + \" Phases Setup Day1-3, Execution Day4-21, Scale Day22-30 plus Quick Wins.\"}\n  ]\n}"
+        "jsonBody": "{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.6,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"Create premium checklist markdown checkboxes [ ] 30-50 items 3 phases.\"},\n    {\"role\": \"user\", \"content\": \"Create Checklist for {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Phases Setup Day1-3, Execution Day4-21, Scale Day22-30 plus Quick Wins.\"}\n  ]\n}"
       },
       "id": "groq-checklist",
       "name": "Groq Checklist",
