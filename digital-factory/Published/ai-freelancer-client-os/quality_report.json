@@ -1,0 +1,22 @@
+{
+  "demand_score": 9,
+  "competition_score": 7,
+  "value_score": 9,
+  "price_score": 8,
+  "market_confidence": 8,
+  "overall": 8.2,
+  "verdict": "APPROVED",
+  "reason": "High pain, clear outcome, willingness to pay $49-99 proven on Gumroad. Medium competition but differentiation strong.",
+  "suggested_price": 49,
+  "price_tiers": {
+    "basic": 19,
+    "standard": 49,
+    "premium": 99
+  },
+  "target_audience_detailed": "Freelancers 23-35yo, US/EU, 1-3 years experience, on Upwork/Fiverr but want off platform, follows @AlexHormozi, @DylanBowen, active in IndieHackers, r/freelance",
+  "improvement_tips": [
+    "Add Loom video walkthrough",
+    "Add real outreach screenshots"
+  ],
+  "risk_flags": []
+}

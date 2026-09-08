@@ -1,0 +1,108 @@
+{
+  "name": "02 - IDEA GENERATOR",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowId": "master",
+        "isInSubWorkflow": true
+      },
+      "id": "trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const niches = [\n  'AI Freelancer Client Acquisition OS for $5k retainers',\n  '30-Day AI Content Engine for Coaches',\n  'AI Proposal Writing System that closes 60%+',\n  'AI Student Research Vault + Citation OS',\n  'AI Job Application Accelerator',\n  'AI Real Estate Lead Machine',\n  'Notion + AI Second Brain for Founders',\n  'AI YouTube Script & Thumbnail System',\n  'AI Cold Email & LinkedIn Outreach OS',\n  'AI Digital Product Launch Kit'\n];\nconst random = niches[Math.floor(Math.random()*niches.length)];\nreturn [{ json: { niche_hint: random, batch_size: $input.item.json.batch_size || 1 } }];"
+      },
+      "id": "pick-niche",
+      "name": "Pick Random Niche",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "options": {
+          "bodyContentType": "json"
+        },
+        "method": "POST",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.9,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product strategist. Generate OUTCOME-driven products, NOT toolkits. Brandable name with \u2122. JSON only.\"},\n    {\"role\": \"user\", \"content\": \"Generate ONE premium product for niche: {{$json.niche_hint}}. Return JSON with: slug (kebab), brand_name with \u2122, title (outcome measurable), outcome, tagline, avatar specific, pain, dream_outcome, core_modules[6-8 outcomes], deliverables[], differentiation why not generic slop, price_point, price_reason, bundle_with[], keywords[10], est_demand, competition_level\"}\n  ]\n}"
+      },
+      "id": "groq-idea",
+      "name": "Groq Idea Generation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const content = $input.item.json.choices?.[0]?.message?.content || $input.item.json.content;\nlet idea;\ntry { idea = JSON.parse(content); } catch(e) { const m = content.match(/\\{[\\s\\S]*\\}/); idea = m ? JSON.parse(m[0]) : {}; }\n// normalize slug\nif (!idea.slug) idea.slug = (idea.title||'product').toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,60);\nreturn [{ json: idea }];"
+      },
+      "id": "parse-idea",
+      "name": "Parse Idea JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Pick Random Niche",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Random Niche": {
+      "main": [
+        [
+          {
+            "node": "Groq Idea Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Idea Generation": {
+      "main": [
+        [
+          {
+            "node": "Parse Idea JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

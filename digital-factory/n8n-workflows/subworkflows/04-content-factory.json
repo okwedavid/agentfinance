@@ -1,0 +1,291 @@
+{
+  "name": "04 - CONTENT FACTORY (Parallel)",
+  "nodes": [
+    {
+      "parameters": {
+        "isInSubWorkflow": true
+      },
+      "id": "trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        360,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "slug",
+              "field2": "slug"
+            }
+          ]
+        },
+        "options": {
+          "multipleMatches": "first"
+        }
+      },
+      "id": "split",
+      "name": "Split Into 5 Parallel",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        580,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
+        },
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.75,\n  \"max_tokens\": 5000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are premium digital product author. Write $99-worthy guide 2500-3500w tactical frameworks, no fluff 'in fast-paced world'. Markdown. NEVER use phrases like In today fast-paced world, In ever-evolving landscape, In digital age. Start directly with pain + promise, tactical, no fluff.\"},\n    {\"role\": \"user\", \"content\": \"Write MAIN GUIDE for {{$json.title}} Brand {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Pain {{$json.pain}} Modules {{JSON.stringify($json.core_modules)}} Differentiation {{$json.differentiation}}. Structure Quick Win, Module1-6 with Why,Framework,Template,Action Steps, 30-Day Roadmap, Troubleshooting.\"}\n  ]\n}"
+      },
+      "id": "groq-guide",
+      "name": "Groq Guide",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
+        },
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 6000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are prompt engineer 60+ copy-paste prompts variables [NICHE]. Markdown organized by use-case.\"},\n    {\"role\": \"user\", \"content\": \"Create Prompt Library for {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Modules {{JSON.stringify($json.core_modules)}}. 6 categories 10 prompts each with Use Case, Prompt code block, Pro Tip.\"}\n  ]\n}"
+      },
+      "id": "groq-prompts",
+      "name": "Groq Prompts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
+        },
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.6,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"Create premium checklist markdown checkboxes [ ] 30-50 items 3 phases.\"},\n    {\"role\": \"user\", \"content\": \"Create Checklist for {{$json.brand_name}} Outcome {{$json.dream_outcome}} Avatar {{$json.avatar}} Phases Setup Day1-3, Execution Day4-21, Scale Day22-30 plus Quick Wins.\"}\n  ]\n}"
+      },
+      "id": "groq-checklist",
+      "name": "Groq Checklist",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        500
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
+        },
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.6,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You curate tools, templates, resources. Real tool names. NEVER use fluff like In today's fast-paced world. Tactical only.\"},\n    {\"role\": \"user\", \"content\": \"Create Resources vault for {{$json.brand_name}} Avatar {{$json.avatar}} Title {{$json.title}} Structure Essential Tools, Templates, Communities, Books, AI Stack, Bonus Discounts.\"}\n  ]\n}"
+      },
+      "id": "groq-resources",
+      "name": "Groq Resources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        700
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "bodyContentType": "json"
+        },
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.7,\n  \"max_tokens\": 2500,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You create bonus increasing perceived value 2x tactical. NEVER fluff.\"},\n    {\"role\": \"user\", \"content\": \"Create BONUS for {{$json.brand_name}} Should be 7-Day Quick Start + 3 case studies (realistic). Avatar {{$json.avatar}} Outcome {{$json.dream_outcome}}\"}\n  ]\n}"
+      },
+      "id": "groq-bonus",
+      "name": "Groq Bonus",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        900
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all;\n// Collect from 5 branches (n8n will call this after parallel)\n// This code merges outputs saved via previous nodes' context\n// In actual run we use Item Lists node, here simulate:\nconst base = $('When Executed by Another Workflow').item.json;\nreturn [{ json: { \n  ...base,\n  guide: $items('Groq Guide',0,0)[0]?.json?.choices?.[0]?.message?.content || 'Guide content missing',\n  prompts: $items('Groq Prompts',0,0)[0]?.json?.choices?.[0]?.message?.content || 'Prompts missing',\n  checklist: $items('Groq Checklist',0,0)[0]?.json?.choices?.[0]?.message?.content || 'Checklist missing',\n  resources: $items('Groq Resources',0,0)[0]?.json?.choices?.[0]?.message?.content || 'Resources missing',\n  bonus: $items('Groq Bonus',0,0)[0]?.json?.choices?.[0]?.message?.content || 'Bonus missing'\n}}];"
+      },
+      "id": "merge-content",
+      "name": "Merge All Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Groq Guide",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Checklist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Resources",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Bonus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Guide": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Prompts": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Checklist": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Resources": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Bonus": {
+      "main": [
+        [
+          {
+            "node": "Merge All Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

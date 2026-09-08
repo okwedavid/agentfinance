@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>{{brand_name}} - Complete Guide</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+body{font-family:'Inter',sans-serif;max-width:800px;margin:0 auto;padding:48px 32px;line-height:1.7;color:#0f172a}
+h1{font-size:32px;font-weight:800;border-bottom:3px solid #6366f1;padding-bottom:12px}
+h2{font-size:24px;margin-top:36px}
+.badge{display:inline-block;background:#6366f1;color:white;padding:4px 12px;border-radius:20px;font-size:12px}
+</style>
+</head>
+<body>
+<span class="badge">Premium System</span>
+<h1>{{brand_name}} - {{title}}</h1>
+<p><em>{{tagline}}</em></p>
+<div>{{content}}</div>
+<footer style="margin-top:60px;border-top:1px solid #e2e8f0;text-align:center;color:#64748b;font-size:13px">
+Premium Product © 2026 Digital Factory
+</footer>
+</body>
+</html>

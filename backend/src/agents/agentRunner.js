@@ -358,7 +358,7 @@ async function callProvider(provider, messages, useTools = false) {
 
     // OpenRouter needs extra headers
     if (provider.name === 'OpenRouter') {
-      headers['HTTP-Referer'] = 'https://agentfinance-production.up.railway.app';
+      headers['HTTP-Referer'] = 'https://agentfinance.onrender.com';
       headers['X-Title'] = 'AgentFinance';
     }
 

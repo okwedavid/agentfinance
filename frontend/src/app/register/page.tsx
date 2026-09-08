@@ -4,8 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'https://serene-magic-production-6d0c.up.railway.app').replace(/\/$/, '');
+import { register } from "@/lib/api";
 
 export default function Register() {
   const [username, setUsername] = useState('');
@@ -18,19 +17,11 @@ export default function Register() {
     e.preventDefault();
     setLoading(true); setError(''); setMessage('');
     try {
-      const res = await fetch(`${API_URL}/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || 'Registration failed'); setLoading(false); return; }
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify({ id: data.id, username: data.username }));
+      await register(username, password);
       setMessage('Account created! Redirecting...');
       setTimeout(() => { window.location.href = '/dashboard'; }, 1000);
-    } catch (err) {
-      setError('Cannot reach server. Try again.');
+    } catch (err: any) {
+      setError(err?.message || 'Cannot reach server. Try again.');
       setLoading(false);
     }
   };

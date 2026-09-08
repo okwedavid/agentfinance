@@ -1,0 +1,99 @@
+{
+  "name": "03 - EVALUATOR",
+  "nodes": [
+    {
+      "parameters": {
+        "isInSubWorkflow": true
+      },
+      "id": "trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "options": {
+          "bodyContentType": "json"
+        },
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"temperature\": 0.3,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"You are ruthless product evaluator for Gumroad/Etsy. Score 1-10 Demand, Competition (10=low good), Value, Price, Confidence. Overall avg. APPROVED if >=7. JSON only.\"},\n    {\"role\": \"user\", \"content\": \"Evaluate Title: {{$json.title}} Brand: {{$json.brand_name}} Avatar: {{$json.avatar}} Pain: {{$json.pain}} Outcome: {{$json.dream_outcome}} Price: {{$json.price_point}} Modules: {{JSON.stringify($json.core_modules)}}. Return JSON: {demand_score, competition_score, value_score, price_score, market_confidence, overall, verdict APPROVED/REJECTED, reason, suggested_price, price_tiers:{basic,standard,premium}}\"}\n  ]\n}"
+      },
+      "id": "groq-eval",
+      "name": "Groq Evaluator (Fast Model)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('When Executed by Another Workflow').item.json;\nconst evalContent = $input.item.json.choices?.[0]?.message?.content || '{}';\nlet ev;\ntry { ev = JSON.parse(evalContent); } catch(e){ const m=evalContent.match(/\\{[\\s\\S]*\\}/); ev=m?JSON.parse(m[0]):{}; }\nif (!ev.overall) { const avg = (ev.demand_score+ev.competition_score+ev.value_score+ev.price_score+ev.market_confidence)/5; ev.overall=Math.round(avg*10)/10; }\nif (!ev.verdict) ev.verdict = ev.overall>=7?'APPROVED':'REJECTED';\nreturn [{ json: { ...input, evaluation: ev, ...ev, slug: input.slug, brand_name: input.brand_name }}];"
+      },
+      "id": "merge",
+      "name": "Merge Idea + Evaluation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "filePath": "=C:/DigitalFactory/catalog/evaluation_log.jsonl",
+        "options": {
+          "append": true
+        }
+      },
+      "id": "log-eval",
+      "name": "Log Evaluation",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Groq Evaluator (Fast Model)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Evaluator (Fast Model)": {
+      "main": [
+        [
+          {
+            "node": "Merge Idea + Evaluation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
