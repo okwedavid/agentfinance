@@ -425,7 +425,7 @@ export default function WalletPage() {
                     </div>
                     {isAdmin && (
                       <div className="mt-3 text-xs text-amber-200">
-                        Admin note: configure the RPC or chain API for {chain.name} in Railway to restore live balance checks.
+                        Admin note: configure the RPC or chain API for {chain.name} in the backend environment (see ALCHEMY_API_KEY/GOOGLE_AI_API_KEY) to restore live balance checks.
                       </div>
                     )}
                   </>

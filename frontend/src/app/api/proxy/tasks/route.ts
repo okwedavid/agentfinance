@@ -1,14 +1,21 @@
 import { NextResponse } from 'next/server';
+import { resolveBackendUrl } from '@/lib/serverConfig';
 
-// This proxy route ensures the frontend can reach the backend
-// regardless of CORS or network topology on Railway
-const BACKEND = (process.env.NEXT_PUBLIC_API_URL || 'https://serene-magic-production-6d0c.up.railway.app').replace(/\/$/, '');
+// Server-side proxy: lets the frontend reach the backend without exposing the
+// backend to CORS/network topology issues on managed platforms.
+const getBackend = async (): Promise<string | null> => {
+  const url = await resolveBackendUrl();
+  return url || null;
+};
 
 export async function GET() {
   try {
-    const res = await fetch(`${BACKEND}/tasks`, {
+    const backend = await getBackend();
+    if (!backend) {
+      return NextResponse.json({ error: 'Backend not configured' }, { status: 502 });
+    }
+    const res = await fetch(`${backend}/tasks`, {
       headers: { 'Content-Type': 'application/json' },
-      // Don't cache - always fresh data
       cache: 'no-store',
     });
     if (!res.ok) {
@@ -24,16 +31,20 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const backend = await getBackend();
+    if (!backend) {
+      return NextResponse.json({ error: 'Backend not configured' }, { status: 502 });
+    }
     const body = await request.json();
     // Forward auth header if present
     const authHeader = request.headers.get('authorization');
     const cookieHeader = request.headers.get('cookie');
-    
+
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (authHeader) headers['Authorization'] = authHeader;
     if (cookieHeader) headers['Cookie'] = cookieHeader;
 
-    const res = await fetch(`${BACKEND}/tasks`, {
+    const res = await fetch(`${backend}/tasks`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),

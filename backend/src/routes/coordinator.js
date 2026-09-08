@@ -10,7 +10,15 @@ const prisma = new PrismaClient({
   },
 });
 const router = express.Router();
-const redis = new IORedis(process.env.REDIS_URL || 'redis://redis:6379');
+const REDIS_URL = process.env.REDIS_URL;
+const redis =
+  REDIS_URL && !REDIS_URL.includes('{{')
+    ? new IORedis(REDIS_URL, { maxRetriesPerRequest: null })
+    : {
+        hgetall: async () => ({}),
+        hset: async () => 0,
+        publish: async () => 0,
+      };
 
 // GET /api/coord/agents
 router.get('/agents', async (req, res) => {

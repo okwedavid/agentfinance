@@ -24,7 +24,7 @@ function formatTime(ts: number) {
 const POLL_INTERVAL = 2000;
 
 const AnalyticsDashboard: React.FC = () => {
-  const { parsedMessages, connectionStatus } = useWebSocket((process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:4001") as any);
+  const { parsedMessages, connectionStatus } = useWebSocket();
   const [metrics, setMetrics] = useState({
     agentsOnline: 0,
     tasksProcessed: 0,

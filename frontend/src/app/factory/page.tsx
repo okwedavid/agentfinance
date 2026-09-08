@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { API_URL } from '@/lib/env';
 
 type Product = {
   id: string;
@@ -22,7 +23,7 @@ export default function FactoryPage() {
   const [lastResult, setLastResult] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'products' | 'generate' | 'ecommerce'>('products');
 
-  const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+  const API = API_URL;
 
   const fetchProducts = async () => {
     try {

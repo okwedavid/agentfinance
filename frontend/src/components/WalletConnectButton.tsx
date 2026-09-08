@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'https://serene-magic-production-6d0c.up.railway.app').replace(/\/$/, '');
+import { API_URL } from '@/lib/env';
 
 export default function WalletConnectButton() {
   const [addr, setAddr] = useState<string | null>(null);

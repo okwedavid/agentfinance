@@ -47,9 +47,7 @@ const configuredOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_U
   .filter(Boolean);
 
 const ALLOWED_ORIGINS = [
-  'https://agentfinance-production.up.railway.app',
-  'https://agentfinance-production.up.railway.com',
-  'https://serene-magic-production-6d0c.up.railway.app',
+  'https://agentfinance.onrender.com',
   'http://localhost:3000',
   'http://localhost:4000',
   ...configuredOrigins,
@@ -57,9 +55,9 @@ const ALLOWED_ORIGINS = [
 
 app.use(cors({
   origin: (origin, callback) => {
+    // Non-browser clients (curl, healthchecks, servers) send no Origin header.
     if (!origin) return callback(null, true);
-    const allowed = ALLOWED_ORIGINS.includes(origin);
-    return callback(allowed ? null : new Error('CORS blocked'), allowed);
+    return callback(null, ALLOWED_ORIGINS.includes(origin));
   },
   credentials: true,
 }));
@@ -79,6 +77,15 @@ if (!redis) {
 
 function signToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+}
+
+function authCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  };
 }
 
 function getTokenFromRequest(req) {
@@ -261,7 +268,7 @@ app.post('/auth/register', async (req, res) => {
     });
     const token = signToken({ sub: user.id, username: user.username });
 
-    res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.cookie('token', token, authCookieOptions());
     res.json({
       id: user.id,
       username: user.username,
@@ -292,7 +299,7 @@ app.post('/auth/login', async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'invalid credentials' });
 
     const token = signToken({ sub: user.id, username: user.username });
-    res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.cookie('token', token, authCookieOptions());
     res.json({
       id: user.id,
       username: user.username,

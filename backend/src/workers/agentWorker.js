@@ -14,7 +14,7 @@ import { summariseTaskResult } from '../services/payoutService.js';
 const REDIS_URL = process.env.REDIS_URL;
 
 if (!REDIS_URL || REDIS_URL.includes('{{')) {
-  console.warn('[Worker] REDIS_URL not configured — agent worker disabled. Fix: Redis.REDIS_URL in Railway variables');
+  console.warn('[Worker] REDIS_URL not configured — agent worker disabled. Fix: set REDIS_URL in the backend environment');
 } else {
   const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 

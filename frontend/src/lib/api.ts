@@ -1,18 +1,7 @@
-const normalizeUrl = (value: string | undefined, fallback: string) => {
-  const raw = (value || '').trim();
-  if (!raw || raw.includes('localhost')) return fallback;
-  return raw.replace(/\/$/, '');
-};
+import { API_URL, WS_URL } from './config';
 
-export const API_BASE = normalizeUrl(
-  process.env.NEXT_PUBLIC_API_URL,
-  'https://serene-magic-production-6d0c.up.railway.app',
-);
-
-export const WS_BASE = normalizeUrl(
-  process.env.NEXT_PUBLIC_WS_URL,
-  'wss://serene-magic-production-6d0c.up.railway.app',
-);
+export const API_BASE = API_URL;
+export const WS_BASE = WS_URL;
 
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -41,6 +30,11 @@ export function logout() {
 }
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
+  if (!API_BASE) {
+    throw new Error(
+      'Backend endpoint is not configured. Set NEXT_PUBLIC_API_URL to the backend origin in Render and rebuild.',
+    );
+  }
   const token = getToken();
   const headers = new Headers(options.headers || {});
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
