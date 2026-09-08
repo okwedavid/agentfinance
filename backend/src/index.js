@@ -259,12 +259,21 @@ app.post('/auth/register', async (req, res) => {
     if (!username || !password) {
       return res.status(400).json({ error: 'username and password required' });
     }
-    const existing = await prisma.user.findUnique({ where: { username } });
+
+    const trimmed = username.trim();
+    if (trimmed.length < 3 || trimmed.length > 30) {
+      return res.status(400).json({ error: 'username must be 3-30 characters' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'password must be at least 6 characters' });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { username: trimmed } });
     if (existing) return res.status(400).json({ error: 'username taken' });
 
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { username, passwordHash },
+      data: { username: trimmed, passwordHash },
     });
     const token = signToken({ sub: user.id, username: user.username });
 
@@ -281,8 +290,11 @@ app.post('/auth/register', async (req, res) => {
       isAdmin: user.username === 'okwedavid',
     });
   } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(400).json({ error: 'username taken' });
+    }
     logger.error('register error', error);
-    res.status(500).json({ error: 'failed' });
+    res.status(500).json({ error: 'registration failed' });
   }
 });
 

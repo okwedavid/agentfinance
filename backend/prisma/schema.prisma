@@ -21,8 +21,8 @@ datasource db {
 model Agent {
   id        String   @id @default(cuid())
   name      String
-  role      String
-  prompt    String
+  role      String   @default("")
+  prompt    String   @default("")
   createdAt DateTime @default(now())
   tasks     Task[]
 }
