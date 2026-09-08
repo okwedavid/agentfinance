@@ -1,4 +1,6 @@
 import http from 'http';
+import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -36,6 +38,25 @@ if (!JWT_SECRET) {
   logger.error('FATAL: JWT_SECRET env var is not set.');
   process.exit(1);
 }
+
+const prismaSchemaPath = fileURLToPath(new URL('../prisma/schema.prisma', import.meta.url));
+const prismaBinPath = fileURLToPath(new URL('../node_modules/.bin/prisma', import.meta.url));
+
+function syncDatabaseSchema() {
+  logger.info('Syncing database schema (prisma db push)...');
+  try {
+    execSync(`"${prismaBinPath}" db push --schema="${prismaSchemaPath}" --accept-data-loss`, {
+      stdio: 'inherit',
+    });
+  } catch (error) {
+    logger.error('prisma db push failed', error);
+    process.exit(1);
+  }
+}
+
+// Ensure the schema is applied before serving traffic, independent of how the
+// process is started (helper/start script overrides may bypass npm scripts).
+syncDatabaseSchema();
 
 const app = express();
 const server = http.createServer(app);
