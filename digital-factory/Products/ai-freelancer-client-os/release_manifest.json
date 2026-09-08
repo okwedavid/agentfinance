@@ -27,15 +27,17 @@
     ],
     "risk_flags": []
   },
-  "created_at": "2026-07-17T21:50:51.346Z",
+  "created_at": "2026-07-26T00:17:12.030Z",
   "files_customer": [
     "Bonus.md",
     "Bonus_Checklist.md",
+    "cover.jpg",
     "License.txt",
     "Prompt_Library.md",
     "README.md",
     "Resources.md",
     "START_HERE.txt",
+    "thumbnail.jpg",
     "User_Guide.md"
   ],
   "files_publishing": [
