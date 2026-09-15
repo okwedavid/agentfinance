@@ -1,4 +1,6 @@
 import http from 'http';
+import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -39,6 +41,25 @@ if (!JWT_SECRET) {
   logger.error('FATAL: JWT_SECRET env var is not set.');
   process.exit(1);
 }
+
+const prismaSchemaPath = fileURLToPath(new URL('../prisma/schema.prisma', import.meta.url));
+const prismaBinPath = fileURLToPath(new URL('../node_modules/.bin/prisma', import.meta.url));
+
+function syncDatabaseSchema() {
+  logger.info('Syncing database schema (prisma db push)...');
+  try {
+    execSync(`"${prismaBinPath}" db push --schema="${prismaSchemaPath}" --accept-data-loss`, {
+      stdio: 'inherit',
+    });
+  } catch (error) {
+    logger.error('prisma db push failed', error);
+    process.exit(1);
+  }
+}
+
+// Ensure the schema is applied before serving traffic, independent of how the
+// process is started (helper/start script overrides may bypass npm scripts).
+syncDatabaseSchema();
 
 const app = express();
 const server = http.createServer(app);
@@ -279,14 +300,20 @@ app.post('/auth/register', async (req, res) => {
       if (existingEmail) return res.status(400).json({ error: 'Email is already registered.' });
     }
 
+    const trimmed = username.trim();
+    if (trimmed.length < 3 || trimmed.length > 30) {
+      return res.status(400).json({ error: 'username must be 3-30 characters' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'password must be at least 6 characters' });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { username: trimmed } });
+    if (existing) return res.status(400).json({ error: 'username taken' });
+
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: {
-        username,
-        email,
-        passwordHash,
-        role: defaultRole(),
-      },
+      data: { username: trimmed, passwordHash },
     });
     const token = signToken({ sub: user.id, username: user.username });
 
@@ -296,8 +323,11 @@ app.post('/auth/register', async (req, res) => {
       token,
     });
   } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(400).json({ error: 'username taken' });
+    }
     logger.error('register error', error);
-    res.status(500).json({ error: 'failed' });
+    res.status(500).json({ error: 'registration failed' });
   }
 });
 
