@@ -6,6 +6,6 @@ NIXPACKS_PKGS = "openssl_3_x"
 cmds = ["npm ci", "npx prisma generate --schema=./prisma/schema.prisma"]
 
 [start]
-# Ensure the schema is applied to the database before booting, then start.
-# `prisma db push` is idempotent and non-destructive.
-cmd = "sh -c 'npx prisma db push --schema=./prisma/schema.prisma && node src/index.js'"
+# Apply tracked Prisma migrations before boot, then start. Never use
+# `prisma db push` (or --accept-data-loss) in production.
+cmd = "sh -c 'npx prisma migrate deploy --schema=./prisma/schema.prisma && node src/index.js'"

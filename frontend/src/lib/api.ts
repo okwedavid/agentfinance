@@ -163,9 +163,10 @@ export async function getPayouts() {
   return Array.isArray(data) ? data : [];
 }
 
-export async function approvePayout(payoutId: string) {
+export async function approvePayout(payoutId: string, approvalToken?: string) {
   return apiFetch(`/payouts/${payoutId}/approve`, {
     method: 'POST',
+    body: JSON.stringify({ approvalToken }),
   });
 }
 

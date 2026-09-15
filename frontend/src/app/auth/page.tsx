@@ -14,7 +14,7 @@ export default function AuthPage(){
     setErr(null);
     try{
       if(mode==='login') await login(username, password);
-      else await register(username, password);
+      else await register(username, '', password);
     }catch(e:any){ setErr(e.message || 'failed'); }
   };
 

@@ -1,7 +1,11 @@
 import express from 'express';
 import prisma from '../prismaClient.js';
+import { authMiddleware } from '../middleware/auth.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
+
+router.use(authMiddleware);
 
 function parseTaskResult(value) {
   if (!value) return null;
@@ -16,7 +20,7 @@ function parseTaskResult(value) {
 router.get('/summary', async (req, res) => {
   try {
     const tasks = await prisma.task.findMany({
-      where: { archived: false },
+      where: { archived: false, userId: req.user.sub },
       orderBy: { createdAt: 'desc' },
       take: 500,
     });
@@ -65,7 +69,7 @@ router.get('/summary', async (req, res) => {
       trends,
     });
   } catch (error) {
-    console.error('analytics summary error', error);
+    logger.error('analytics summary error', error);
     res.status(500).json({ error: 'failed' });
   }
 });
@@ -75,7 +79,7 @@ router.get('/history', async (req, res) => {
     const take = parseInt(req.query.limit, 10) || 50;
     const skip = parseInt(req.query.offset ?? req.query.skip, 10) || 0;
     const rows = await prisma.task.findMany({
-      where: { archived: false },
+      where: { archived: false, userId: req.user.sub },
       orderBy: { createdAt: 'desc' },
       take,
       skip,
@@ -85,7 +89,7 @@ router.get('/history', async (req, res) => {
       result: parseTaskResult(row.result),
     })));
   } catch (error) {
-    console.error('analytics history error', error);
+    logger.error('analytics history error', error);
     res.status(500).json({ error: 'failed' });
   }
 });
@@ -93,12 +97,12 @@ router.get('/history', async (req, res) => {
 router.delete('/clear', async (req, res) => {
   try {
     const result = await prisma.task.updateMany({
-      where: { archived: false },
+      where: { archived: false, userId: req.user.sub },
       data: { archived: true },
     });
     res.json({ ok: true, cleared: result.count });
   } catch (error) {
-    console.error('analytics clear error', error);
+    logger.error('analytics clear error', error);
     res.status(500).json({ error: 'failed' });
   }
 });

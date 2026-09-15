@@ -176,7 +176,7 @@ function TaskCard({
 }
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, isNewUser } = useAuth();
   const [tasks, setTasks] = useState<any[]>([]);
   const [runtime, setRuntime] = useState<any>(null);
   const [message, setMessage] = useState("");
@@ -269,7 +269,7 @@ export default function DashboardPage() {
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">Mission control</p>
               <h1 className="mt-2 text-3xl font-bold text-white">
-                Welcome back, {user?.displayName || user?.username || "operator"}
+                {isNewUser ? "Welcome, " : "Welcome back, "}{user?.displayName || user?.username || "operator"}
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-300">
                 This dashboard keeps fleet readiness, wallet state, and the latest task summaries in one responsive control surface.
