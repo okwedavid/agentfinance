@@ -1,28 +1,44 @@
 "use client";
 import { useState } from "react";
-import { login, register, isLoggedIn } from "@/lib/api";
+import { isLoggedIn } from "@/lib/api";
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 import Link from "next/link";
 
 export default function LoginPage() {
+  const { login, register } = useAuth();
+  const router = useRouter();
   const [mode, setMode]       = useState<'login' | 'register'>('login');
   const [username, setUser]   = useState('');
+  const [email, setEmail]     = useState('');
   const [password, setPass]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
+  const [providers, setProviders] = useState<{ id: string; displayName: string; configured: boolean }[]>([]);
 
   useEffect(() => {
     if (isLoggedIn()) window.location.href = '/dashboard';
   }, []);
 
+  useEffect(() => {
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/auth/oauth/providers`, { credentials: 'include' })
+      .then((res) => res.json().catch(() => null))
+      .then((data) => {
+        if (Array.isArray(data?.providers)) setProviders(data.providers.filter((p: any) => p.configured));
+      })
+      .catch(() => {});
+  }, []);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!username.trim() || !password.trim()) { setError('Enter username and password'); return; }
+    if (mode === 'register' && !email.trim()) { setError('Enter your email address'); return; }
     setLoading(true); setError('');
     try {
-      if (mode === 'login') await login(username, password);
-      else await register(username, password);
-      window.location.href = '/dashboard';
+      if (mode === 'login') await login(username.trim(), password);
+      else await register(username.trim(), email.trim(), password);
+      router.replace('/dashboard');
     } catch (e: any) {
       setError(e.message || 'Something went wrong');
     } finally { setLoading(false); }
@@ -68,6 +84,17 @@ export default function LoginPage() {
                 placeholder="Enter username" autoComplete="username"
                 className="input-field" autoFocus />
             </div>
+
+            {mode === 'register' && (
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5 font-medium">Email</label>
+                <input
+                  type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  placeholder="you@example.com" autoComplete="email"
+                  className="input-field" />
+              </div>
+            )}
+
             <div>
               <label className="block text-xs text-gray-400 mb-1.5 font-medium">Password</label>
               <input
@@ -90,6 +117,27 @@ export default function LoginPage() {
               ) : mode === 'login' ? 'Sign In' : 'Create Account'}
             </button>
           </form>
+
+          {providers.length > 0 && (
+            <>
+              <div className="mt-5 flex items-center gap-3 text-[11px] uppercase tracking-[0.2em] text-gray-600">
+                <span className="h-px flex-1 bg-white/[0.06]" />
+                <span>Social login</span>
+                <span className="h-px flex-1 bg-white/[0.06]" />
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {providers.map((p) => (
+                  <a
+                    key={p.id}
+                    href={`${process.env.NEXT_PUBLIC_API_URL || ''}/auth/oauth/${p.id}/start`}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-sm text-gray-300 transition hover:bg-white/[0.06] text-center"
+                  >
+                    {p.displayName}
+                  </a>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* Features preview */}
           <div className="mt-6 pt-5 border-t border-white/[0.06]">

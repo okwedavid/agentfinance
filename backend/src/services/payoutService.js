@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Wallet, JsonRpcProvider, parseEther, formatEther } from 'ethers';
 import prisma from '../prismaClient.js';
+import { validatePayoutAmount } from '../utils/security.js';
 
 const NETWORKS = {
   ethereum: {
@@ -254,10 +255,11 @@ export async function preparePayoutPlan({
     throw new Error(`Enter a valid ${network.label} wallet address.`);
   }
 
-  const safeAmount = Number(amount);
-  if (!Number.isFinite(safeAmount) || safeAmount <= 0) {
-    throw new Error('Amount must be greater than zero.');
+  const checked = validatePayoutAmount(amount);
+  if (!checked.ok) {
+    throw new Error(checked.message);
   }
+  const safeAmount = checked.amount;
 
   const signer = getTreasurySignerStatus(network);
   const status = signer.ready ? 'approval_required' : 'blocked';
@@ -325,13 +327,35 @@ async function broadcastEvmPayout(payout) {
   };
 }
 
-export async function approvePayout({ payoutId, userId }) {
-  const payout = await prisma.payout.findFirst({
-    where: { id: payoutId, userId },
-  });
+export async function approvePayout({ payoutId, userId, approvalToken, actorRole }) {
+  if (!approvalToken || typeof approvalToken !== 'string') {
+    throw new Error('A valid approval token is required to approve this payout.');
+  }
 
+  const payout = await prisma.payout.findUnique({ where: { id: payoutId } });
   if (!payout) throw new Error('Payout not found.');
-  if (payout.status === 'confirmed') return payout;
+
+  // The unsigned token is the gate that proves approval was prepared for this
+  // specific payout. Never accept an arbitrary/unverified token.
+  if (!payout.approvalToken || approvalToken !== payout.approvalToken) {
+    throw new Error('Invalid approval token.');
+  }
+
+  // Do not re-broadcast an already broadcast/confirmed payout.
+  if (payout.status === 'broadcasted' || payout.status === 'confirmed') return payout;
+
+  // Re-check the stored amount against the hard cap at approval time.
+  const checked = validatePayoutAmount(payout.amount);
+  if (!checked.ok) {
+    const capped = await prisma.payout.update({
+      where: { id: payout.id },
+      data: { status: 'blocked', error: checked.message },
+    });
+    return capped;
+  }
+
+  // Privileged broadcast: authorization is enforced at the route layer. This
+  // service only signs/broadcasts when given a verified approval token.
 
   const network = normalizeNetwork(payout.network);
   const signer = getTreasurySignerStatus(network);

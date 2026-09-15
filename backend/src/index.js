@@ -16,6 +16,9 @@ import dispatchFactory from './routes/dispatch.js';
 import sessionsFactory from './routes/sessions.js';
 import replayRouter from './routes/replay.js';
 import walletRouter from './routes/wallet.js';
+import { authMiddleware, requireAdmin } from './middleware/auth.js';
+import { defaultRole, serializeUser, validateEmail, validatePassword, validateUsername } from './utils/security.js';
+import oauthRouter from './routes/oauth.js';
 import rateLimit from './middleware/rateLimit.js';
 import errorHandler from './middleware/errorHandler.js';
 import logger from './utils/logger.js';
@@ -109,20 +112,21 @@ function authCookieOptions() {
   };
 }
 
-function getTokenFromRequest(req) {
-  const authHeader = req.headers.authorization;
-  if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7);
-  return req.cookies?.token || null;
-}
+async function bootstrapAdmins() {
+  const names = (process.env.ADMIN_USERNAMES || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
 
-function authMiddleware(req, res, next) {
-  try {
-    const token = getTokenFromRequest(req);
-    if (!token) return res.status(401).json({ error: 'unauthenticated' });
-    req.user = jwt.verify(token, JWT_SECRET);
-    return next();
-  } catch {
-    return res.status(401).json({ error: 'unauthenticated' });
+  if (names.length === 0) return;
+
+  const result = await prisma.user.updateMany({
+    where: { username: { in: names } },
+    data: { role: 'ADMIN' },
+  });
+
+  if (result.count > 0) {
+    logger.info(`Bootstrapped ${result.count} account(s) to ADMIN role from ADMIN_USERNAMES.`);
   }
 }
 
@@ -277,8 +281,23 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
 app.post('/auth/register', async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'username and password required' });
+    const email = typeof req.body.email === 'string' && req.body.email.trim() ? req.body.email.trim().toLowerCase() : null;
+
+    const usernameError = validateUsername(username);
+    if (usernameError) return res.status(400).json({ error: usernameError });
+
+    const emailError = validateEmail(email);
+    if (emailError) return res.status(400).json({ error: emailError });
+
+    const passwordError = validatePassword(password);
+    if (passwordError) return res.status(400).json({ error: passwordError });
+
+    const existingUsername = await prisma.user.findUnique({ where: { username } });
+    if (existingUsername) return res.status(400).json({ error: 'Username is already taken.' });
+
+    if (email) {
+      const existingEmail = await prisma.user.findUnique({ where: { email } });
+      if (existingEmail) return res.status(400).json({ error: 'Email is already registered.' });
     }
 
     const trimmed = username.trim();
@@ -300,15 +319,8 @@ app.post('/auth/register', async (req, res) => {
 
     res.cookie('token', token, authCookieOptions());
     res.json({
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName,
-      bio: user.bio,
-      walletAddress: user.walletAddress,
-      walletProfiles: user.walletProfiles || {},
-      preferredNetwork: user.preferredNetwork || 'ethereum',
+      ...serializeUser(user, { isNewUser: true }),
       token,
-      isAdmin: user.username === 'okwedavid',
     });
   } catch (error) {
     if (error.code === 'P2002') {
@@ -334,15 +346,8 @@ app.post('/auth/login', async (req, res) => {
     const token = signToken({ sub: user.id, username: user.username });
     res.cookie('token', token, authCookieOptions());
     res.json({
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName,
-      bio: user.bio,
+      ...serializeUser(user, { isNewUser: false }),
       token,
-      walletAddress: user.walletAddress,
-      walletProfiles: user.walletProfiles || {},
-      preferredNetwork: user.preferredNetwork || 'ethereum',
-      isAdmin: user.username === 'okwedavid',
     });
   } catch (error) {
     logger.error('login error', error);
@@ -354,16 +359,7 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.user.sub } });
     if (!user) return res.status(404).json({ error: 'user not found' });
-    res.json({
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName,
-      bio: user.bio,
-      walletAddress: user.walletAddress,
-      walletProfiles: user.walletProfiles || {},
-      preferredNetwork: user.preferredNetwork || 'ethereum',
-      isAdmin: user.username === 'okwedavid',
-    });
+    res.json(serializeUser(user));
   } catch {
     res.status(500).json({ error: 'failed' });
   }
@@ -384,16 +380,7 @@ app.patch('/auth/me', authMiddleware, async (req, res) => {
       data,
     });
 
-    res.json({
-      id: updated.id,
-      username: updated.username,
-      displayName: updated.displayName,
-      bio: updated.bio,
-      walletAddress: updated.walletAddress,
-      walletProfiles: updated.walletProfiles || {},
-      preferredNetwork: updated.preferredNetwork || 'ethereum',
-      isAdmin: updated.username === 'okwedavid',
-    });
+    res.json(serializeUser(updated));
   } catch (error) {
     logger.error('profile update error', error);
     res.status(500).json({ error: 'failed' });
@@ -645,13 +632,22 @@ app.get('/payouts/:id/status', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/payouts/:id/approve', authMiddleware, async (req, res) => {
+app.post('/payouts/:id/approve', authMiddleware, requireAdmin, async (req, res) => {
   try {
-    const payout = await approvePayout({ payoutId: req.params.id, userId: req.user.sub });
+    const payout = await approvePayout({
+      payoutId: req.params.id,
+      userId: req.user.sub,
+      approvalToken: req.body?.approvalToken,
+      actorRole: req.userRole,
+    });
     res.json(payout);
   } catch (error) {
     logger.error('approve payout error', error);
-    res.status(400).json({ error: error.message || 'Could not approve payout.' });
+    const message = error.message || 'Could not approve payout.';
+    if (/token|permission|authorized|forbidden/i.test(message)) {
+      return res.status(403).json({ error: message });
+    }
+    return res.status(400).json({ error: message });
   }
 });
 
@@ -659,6 +655,7 @@ app.use('/analytics', analyticsRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/wallet', walletRouter);
 app.use('/api/tasks/replay', replayRouter);
+app.use('/auth/oauth', oauthRouter);
 
 try {
   const factoryRouter = (await import('./routes/factory.js')).default;
@@ -725,6 +722,10 @@ wss.on('connection', (ws, req) => {
 });
 
 const PORT = process.env.PORT || 4000;
+
+// Bootstrap admin role from server-side env config (never from the client).
+bootstrapAdmins().catch((error) => logger.error(`Admin bootstrap failed: ${error.message}`));
+
 server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Redis: ${redis ? 'connected' : 'disabled'}`);

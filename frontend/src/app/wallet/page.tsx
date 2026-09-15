@@ -91,7 +91,7 @@ export default function WalletPage() {
 
   function flash(text: string) {
     setMessage(text);
-    window.setTimeout(() => setMessage(""), 3500);
+    window.setTimeout(() => setMessage(""), 5000);
   }
 
   const onSocketEvent = useMemo(
@@ -236,7 +236,7 @@ export default function WalletPage() {
   async function approveLatestPayout(payoutId: string) {
     setApprovingId(payoutId);
     try {
-      await approvePayout(payoutId);
+      await approvePayout(payoutId, latestPayout?.approvalToken);
       await Promise.all([refreshPayoutsList(), refreshTasks()]);
       flash("Payout approval submitted.");
     } catch (error: any) {
@@ -497,7 +497,7 @@ export default function WalletPage() {
                   </div>
 
                   <div className="flex flex-col gap-3 sm:flex-row">
-                    {latestPayout.status === "approval_required" && (
+                    {isAdmin && latestPayout.status === "approval_required" && (
                       <button
                         onClick={() => approveLatestPayout(latestPayout.id)}
                         disabled={approvingId === latestPayout.id}
