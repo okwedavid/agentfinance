@@ -11,21 +11,13 @@ import {
   getOAuthProvider,
   getRedirectUri,
 } from '../services/oauthService.js';
+import { createSessionForUser } from '../middleware/auth.js';
 import { defaultRole, serializeUser, validateEmail, validateUsername } from '../utils/security.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET;
-
-function cookieOptions() {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  };
-}
 
 // Short-lived in-memory state store for the OAuth start -> callback handshake.
 const pendingStates = new Map();
@@ -123,8 +115,12 @@ router.get('/:provider/callback', async (req, res) => {
     const profile = await fetchOAuthUserInfo(providerId, accessToken);
     const user = await findOrCreateUserFromOAuth({ email: profile.email, name: profile.name });
 
-    const token = jwt.sign({ sub: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, cookieOptions());
+    const session = await createSessionForUser(user.id);
+    const token = jwt.sign(
+      { sub: user.id, username: user.username, role: user.role, sid: session.id },
+      JWT_SECRET,
+      { expiresIn: '7d' },
+    );
 
     res.json({
       ...serializeUser(user, { isNewUser: false }),

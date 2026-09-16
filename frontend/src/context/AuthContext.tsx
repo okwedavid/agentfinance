@@ -6,6 +6,8 @@ import {
   isLoggedIn,
   login as apiLogin,
   logout as apiLogout,
+  logoutSession as apiLogoutSession,
+  deleteAccount as apiDeleteAccount,
   register as apiRegister,
 } from "@/lib/api";
 
@@ -20,6 +22,7 @@ interface User {
   walletProfiles?: Record<string, string>;
   preferredNetwork?: string | null;
   isAdmin?: boolean;
+  isSuperAdmin?: boolean;
   isNewUser?: boolean;
 }
 
@@ -29,8 +32,10 @@ interface AuthCtx {
   user: User | null;
   loading: boolean;
   refresh: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
   isNewUser: boolean;
   token: string | null;
 }
@@ -41,8 +46,10 @@ const AuthContext = createContext<AuthCtx>({
   user: null,
   loading: true,
   refresh: async () => {},
-  logout: () => {},
+  logout: async () => {},
+  deleteAccount: async () => {},
   isAdmin: false,
+  isSuperAdmin: false,
   isNewUser: false,
   token: null,
 });
@@ -59,7 +66,8 @@ function normalizeUser(payload: any): User | null {
     walletAddress: payload.walletAddress || null,
     walletProfiles: payload.walletProfiles || {},
     preferredNetwork: payload.preferredNetwork || "ethereum",
-    isAdmin: payload.role === "ADMIN" || payload.isAdmin === true,
+    isAdmin: payload.role === "ADMIN" || payload.role === "SUPER_ADMIN" || payload.isAdmin === true,
+    isSuperAdmin: payload.role === "SUPER_ADMIN" || payload.isSuperAdmin === true,
     isNewUser: payload.isNewUser === true,
   };
 }
@@ -111,7 +119,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await applyAuthResult(payload, true);
   }
 
-  function logout() {
+  async function logout() {
+    await apiLogoutSession();
     apiLogout();
     setUser(null);
     setToken(null);
@@ -119,11 +128,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.href = "/login";
   }
 
+  async function deleteAccount() {
+    await apiDeleteAccount();
+    apiLogout();
+    setUser(null);
+    setToken(null);
+    setIsNewUser(false);
+    window.location.href = "/register";
+  }
+
   useEffect(() => {
     void refresh();
   }, []);
 
-  const isAdmin = user?.role === "ADMIN";
+  const isAdmin = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
 
   const value = useMemo(() => ({
     login,
@@ -132,10 +151,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     refresh,
     logout,
+    deleteAccount,
     isAdmin,
+    isSuperAdmin,
     isNewUser,
     token,
-  }), [user, loading, isAdmin, isNewUser, token]);
+  }), [user, loading, isAdmin, isSuperAdmin, isNewUser, token]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

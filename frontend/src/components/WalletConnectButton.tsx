@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { API_URL } from '@/lib/env';
+import { getToken } from '@/lib/api';
 
 export default function WalletConnectButton() {
   const [addr, setAddr] = useState<string | null>(null);
@@ -15,7 +16,7 @@ export default function WalletConnectButton() {
   }, []);
 
   async function saveWalletToBackend(address: string) {
-    const token = localStorage.getItem('token');
+    const token = getToken();
     if (!token) return;
     setSaving(true);
     try {

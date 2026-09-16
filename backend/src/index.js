@@ -16,8 +16,18 @@ import dispatchFactory from './routes/dispatch.js';
 import sessionsFactory from './routes/sessions.js';
 import replayRouter from './routes/replay.js';
 import walletRouter from './routes/wallet.js';
-import { authMiddleware, requireAdmin } from './middleware/auth.js';
-import { defaultRole, serializeUser, validateEmail, validatePassword, validateUsername } from './utils/security.js';
+import { authMiddleware, createSessionForUser, requireAdmin, requireRole } from './middleware/auth.js';
+import {
+  ROLE_ADMIN,
+  ROLE_SUPER_ADMIN,
+  defaultRole,
+  isSuperAdminRole,
+  normalizeRole,
+  serializeUser,
+  validateEmail,
+  validatePassword,
+  validateUsername,
+} from './utils/security.js';
 import oauthRouter from './routes/oauth.js';
 import rateLimit from './middleware/rateLimit.js';
 import errorHandler from './middleware/errorHandler.js';
@@ -103,15 +113,6 @@ function signToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
 
-function authCookieOptions() {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  };
-}
-
 async function bootstrapAdmins() {
   const names = (process.env.ADMIN_USERNAMES || '')
     .split(',')
@@ -127,6 +128,45 @@ async function bootstrapAdmins() {
 
   if (result.count > 0) {
     logger.info(`Bootstrapped ${result.count} account(s) to ADMIN role from ADMIN_USERNAMES.`);
+  }
+}
+
+// Enforce a single SUPER_ADMIN. The owner is set via SUPER_ADMIN_USERNAME
+// (defaults to the okwedavid owner account). Extra SUPER_ADMIN accounts are
+// demoted to ADMIN. Account creation itself is never automated.
+async function ensureSuperAdmin() {
+  try {
+    const ownerUsername = process.env.SUPER_ADMIN_USERNAME || 'okwedavid';
+    const owner = await prisma.user.findUnique({ where: { username: ownerUsername } });
+    if (owner && owner.role !== ROLE_SUPER_ADMIN) {
+      await prisma.user.update({
+        where: { id: owner.id },
+        data: { role: ROLE_SUPER_ADMIN },
+      });
+      logger.info(`Promoted ${ownerUsername} to SUPER_ADMIN.`);
+    }
+
+    const superAdmins = await prisma.user.findMany({ where: { role: ROLE_SUPER_ADMIN } });
+    for (const admin of superAdmins) {
+      if (admin.username !== ownerUsername) {
+        await prisma.user.update({
+          where: { id: admin.id },
+          data: { role: ROLE_ADMIN },
+        });
+        logger.info(`Demoted ${admin.username} to ADMIN (only ${ownerUsername} may be super admin).`);
+      }
+    }
+  } catch (error) {
+    logger.warn('ensureSuperAdmin skipped', error.message);
+  }
+}
+
+async function bootstrapRun() {
+  try {
+    await bootstrapAdmins();
+    await ensureSuperAdmin();
+  } catch (error) {
+    logger.warn('role bootstrap skipped', error.message);
   }
 }
 
@@ -312,12 +352,14 @@ app.post('/auth/register', async (req, res) => {
     if (existing) return res.status(400).json({ error: 'username taken' });
 
     const passwordHash = await bcrypt.hash(password, 10);
+    const ownerUsername = process.env.SUPER_ADMIN_USERNAME || 'okwedavid';
+    const role = trimmed === ownerUsername ? ROLE_SUPER_ADMIN : defaultRole();
     const user = await prisma.user.create({
-      data: { username: trimmed, passwordHash },
+      data: { username: trimmed, passwordHash, role },
     });
-    const token = signToken({ sub: user.id, username: user.username });
+    const session = await createSessionForUser(user.id);
+    const token = signToken({ sub: user.id, username: user.username, role: user.role, sid: session.id });
 
-    res.cookie('token', token, authCookieOptions());
     res.json({
       ...serializeUser(user, { isNewUser: true }),
       token,
@@ -343,8 +385,9 @@ app.post('/auth/login', async (req, res) => {
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ error: 'invalid credentials' });
 
-    const token = signToken({ sub: user.id, username: user.username });
-    res.cookie('token', token, authCookieOptions());
+    const session = await createSessionForUser(user.id);
+    const token = signToken({ sub: user.id, username: user.username, role: user.role, sid: session.id });
+
     res.json({
       ...serializeUser(user, { isNewUser: false }),
       token,
@@ -383,6 +426,95 @@ app.patch('/auth/me', authMiddleware, async (req, res) => {
     res.json(serializeUser(updated));
   } catch (error) {
     logger.error('profile update error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.post('/auth/logout', authMiddleware, async (req, res) => {
+  try {
+    if (req.sid) {
+      await prisma.authSession.updateMany({
+        where: { id: req.sid, userId: req.user.sub },
+        data: { revoked: true },
+      });
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    logger.error('logout error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.delete('/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user.sub } });
+    if (!user) return res.status(404).json({ error: 'user not found' });
+    if (isSuperAdminRole(normalizeRole(user.role))) {
+      return res.status(400).json({ error: 'The owner/super admin account cannot be deleted.' });
+    }
+
+    const taskRows = await prisma.task.findMany({ where: { userId: user.id }, select: { id: true } });
+    const taskIds = taskRows.map((task) => task.id);
+
+    await prisma.$transaction([
+      prisma.authSession.updateMany({ where: { userId: user.id }, data: { revoked: true } }),
+      prisma.message.deleteMany({ where: { taskId: { in: taskIds } } }),
+      prisma.task.deleteMany({ where: { userId: user.id } }),
+      prisma.payout.deleteMany({ where: { userId: user.id } }),
+      prisma.digitalProduct.deleteMany({ where: { userId: user.id } }),
+      prisma.factoryRun.deleteMany({ where: { userId: user.id } }),
+      prisma.user.delete({ where: { id: user.id } }),
+    ]);
+
+    res.json({ ok: true });
+  } catch (error) {
+    logger.error('delete account error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.post('/auth/promote', authMiddleware, requireRole([ROLE_SUPER_ADMIN]), async (req, res) => {
+  try {
+    const targetUsername = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    if (!targetUsername) return res.status(400).json({ error: 'username required' });
+
+    const target = await prisma.user.findUnique({ where: { username: targetUsername } });
+    if (!target) return res.status(404).json({ error: 'user not found' });
+    if (isSuperAdminRole(normalizeRole(target.role))) {
+      return res.status(400).json({ error: 'The super admin account cannot be changed.' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: target.id },
+      data: { role: ROLE_ADMIN },
+    });
+
+    res.json({ ok: true, user: updated });
+  } catch (error) {
+    logger.error('promote error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.post('/auth/demote', authMiddleware, requireRole([ROLE_SUPER_ADMIN]), async (req, res) => {
+  try {
+    const targetUsername = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    if (!targetUsername) return res.status(400).json({ error: 'username required' });
+
+    const target = await prisma.user.findUnique({ where: { username: targetUsername } });
+    if (!target) return res.status(404).json({ error: 'user not found' });
+    if (isSuperAdminRole(normalizeRole(target.role))) {
+      return res.status(400).json({ error: 'The super admin account cannot be changed.' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: target.id },
+      data: { role: defaultRole() },
+    });
+
+    res.json({ ok: true, user: updated });
+  } catch (error) {
+    logger.error('demote error', error);
     res.status(500).json({ error: 'failed' });
   }
 });
@@ -724,7 +856,7 @@ wss.on('connection', (ws, req) => {
 const PORT = process.env.PORT || 4000;
 
 // Bootstrap admin role from server-side env config (never from the client).
-bootstrapAdmins().catch((error) => logger.error(`Admin bootstrap failed: ${error.message}`));
+bootstrapRun().catch((error) => logger.error(`Admin bootstrap failed: ${error.message}`));
 
 server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server running on port ${PORT}`);

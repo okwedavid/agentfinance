@@ -32,13 +32,27 @@ model User {
   username      String   @unique
   email         String?  @unique
   passwordHash  String
-  role          String   @default("USER") // USER | ADMIN, server-authoritative
+  role          String   @default("USER") // USER | ADMIN | SUPER_ADMIN, server-authoritative
   displayName   String?
   bio           String?
   walletAddress String?
   walletProfiles Json?
   preferredNetwork String? @default("ethereum")
   createdAt     DateTime @default(now())
+  sessions      AuthSession[]
+  tasks         Task[]
+  payouts       Payout[]
+  digitalProducts DigitalProduct[]
+}
+
+model AuthSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Task {
@@ -57,6 +71,7 @@ model Task {
   updatedAt   DateTime  @updatedAt
 
   Agent    Agent?    @relation(fields: [agentId], references: [id])
+  User     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages Message[]
 }
 
@@ -118,6 +133,7 @@ model TokenUsage {
 model Payout {
   id               String   @id @default(cuid())
   userId           String
+  user             User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   taskId           String?
   network          String
   assetSymbol      String
@@ -163,6 +179,7 @@ model DigitalProduct {
   manifest          Json?
   ecommerce         Json?    // publish results {gumroad, shopify, etsy...}
   userId            String?
+  user              User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }

@@ -1,6 +1,6 @@
 import express from 'express';
 import prisma from '../prismaClient.js';
-import { requireRole } from '../middleware/auth.js';
+import { requireRole, ROLE_ADMIN, ROLE_SUPER_ADMIN } from '../middleware/auth.js';
 import { fullFactoryRun, generateIdeaService, evaluateIdeaService, generatePublishingService } from '../services/factoryService.js';
 import logger from '../utils/logger.js';
 
@@ -8,10 +8,10 @@ const router = express.Router();
 
 // Every factory endpoint requires an authenticated user; the role is resolved
 // server-side so user-scoped routes know whether the caller is an admin.
-router.use(requireRole(['USER', 'ADMIN']));
+router.use(requireRole(['USER', ROLE_ADMIN, ROLE_SUPER_ADMIN]));
 
 function isAdmin(req) {
-  return req.userRole === 'ADMIN';
+  return req.userRole === ROLE_ADMIN || req.userRole === ROLE_SUPER_ADMIN;
 }
 
 // Generate single idea only

@@ -1,22 +1,50 @@
 import jwt from 'jsonwebtoken';
 import prisma from '../prismaClient.js';
-import { normalizeRole, isAdminRole } from '../utils/security.js';
+import {
+  normalizeRole,
+  isAdminRole,
+  ROLE_ADMIN,
+  ROLE_SUPER_ADMIN,
+} from '../utils/security.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
 export function getTokenFromRequest(req) {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7);
-  return req.cookies?.token || null;
+  return null;
 }
 
-export function authMiddleware(req, res, next) {
+// One active device per account: revoke every prior session, then issue one new
+// session for the user. Used on login, register, and OAuth completion.
+export async function createSessionForUser(userId) {
+  await prisma.authSession.updateMany({ where: { userId }, data: { revoked: true } });
+  const session = await prisma.authSession.create({ data: { userId } });
+  return session;
+}
+
+// Session-bound auth. Tokens issued without a sid (pre-session builds) are now
+// rejected, which forces a clean re-login once and stops background auto-login:
+// the httpOnly cookie path is gone, so a browser restart cannot resurrect a login.
+export async function authMiddleware(req, res, next) {
   try {
     const token = getTokenFromRequest(req);
     if (!token) return res.status(401).json({ error: 'unauthenticated' });
-    req.user = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (!payload?.sid) return res.status(401).json({ error: 'session_expired' });
+
+    const session = await prisma.authSession.findUnique({ where: { id: payload.sid } });
+    if (!session || session.revoked || session.userId !== payload.sub) {
+      return res.status(401).json({ error: 'session_expired' });
+    }
+
+    req.user = payload;
+    req.sid = payload.sid;
     return next();
-  } catch {
+  } catch (error) {
+    if (error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'session_expired' });
+    }
     return res.status(401).json({ error: 'unauthenticated' });
   }
 }
@@ -53,9 +81,9 @@ export function requireRole(allowedRoles) {
 }
 
 export function requireAdmin(req, res, next) {
-  return requireRole(['ADMIN'])(req, res, next);
+  return requireRole([ROLE_ADMIN, ROLE_SUPER_ADMIN])(req, res, next);
 }
 
-export { isAdminRole };
+export { isAdminRole, ROLE_ADMIN, ROLE_SUPER_ADMIN };
 
 export default authMiddleware;

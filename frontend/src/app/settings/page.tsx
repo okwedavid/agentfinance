@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import {
   deleteAllTasks,
+  demoteUser,
   getRuntimeStatus,
   isLoggedIn,
+  promoteUser,
   saveWalletAddress,
 } from "@/lib/api";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -39,13 +41,14 @@ const PROVIDER_GROUPS = [
 ];
 
 export default function SettingsPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin, deleteAccount, logout } = useAuth();
   const { connectionStatus } = useWebSocket();
   const [settings, setSettings] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState<string>("");
   const [tab, setTab] = useState<"agent" | "runtime" | "danger">("agent");
   const [runtime, setRuntime] = useState<any>(null);
   const [loadingRuntime, setLoadingRuntime] = useState(false);
+  const [adminUsername, setAdminUsername] = useState("");
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -105,6 +108,43 @@ export default function SettingsPage() {
       // Keep the UI responsive even if the backend is down.
     }
     setMessage("Wallet disconnected.");
+  }
+
+  async function signOut() {
+    if (!confirm("Sign out of this browser session?")) return;
+    await logout();
+  }
+
+  async function removeAccount() {
+    if (!confirm("Delete this account permanently? This cannot be undone.")) return;
+    if (!confirm("Final warning: all tasks, payouts, wallet links, and messages for this account will be erased. Continue?")) return;
+    try {
+      await deleteAccount();
+    } catch (error: any) {
+      setMessage(error.message || "Could not delete account.");
+    }
+  }
+
+  async function promote() {
+    const username = adminUsername.trim();
+    if (!username) return;
+    try {
+      await promoteUser(username);
+      setMessage(`${username} is now an admin.`);
+      setAdminUsername("");
+    } catch (error: any) {
+      setMessage(error.message || "Could not promote user.");
+    }
+  }
+
+  async function demote(username: string) {
+    if (!confirm(`Remove admin access from ${username}?`)) return;
+    try {
+      await demoteUser(username);
+      setMessage(`${username} is no longer an admin.`);
+    } catch (error: any) {
+      setMessage(error.message || "Could not demote user.");
+    }
   }
 
   const providerSummary = useMemo(() => {
@@ -274,6 +314,52 @@ export default function SettingsPage() {
                 Disconnect wallet
               </button>
             </div>
+
+            <div className="glass rounded-[28px] border border-white/10 p-5">
+              <h2 className="text-lg font-semibold text-white">Sign out</h2>
+              <p className="mt-2 text-sm text-slate-400">
+                Ends this browser session securely. Your token stops working on the server immediately.
+              </p>
+              <button onClick={signOut} className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200 transition hover:bg-white/10">
+                Sign out of this device
+              </button>
+            </div>
+
+            <div className="glass rounded-[28px] border border-rose-400/15 p-5">
+              <h2 className="text-lg font-semibold text-white">Delete account</h2>
+              <p className="mt-2 text-sm text-slate-400">
+                Permanently removes this account, its tasks, payouts, wallet links, and messages. The super admin (owner) account cannot be deleted.
+              </p>
+              <button onClick={removeAccount} className="mt-4 rounded-2xl border border-rose-300/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100 transition hover:bg-rose-400/15">
+                Delete my account
+              </button>
+            </div>
+
+            {isSuperAdmin && (
+              <div className="glass rounded-[28px] border border-cyan-300/15 p-5 lg:col-span-2">
+                <h2 className="text-lg font-semibold text-white">Administrators</h2>
+                <p className="mt-2 text-sm text-slate-400">
+                  Only the super admin (okwedavid) can promote or demote admin accounts. Admins can approve payouts and manage the fleet.
+                </p>
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                  <input
+                    value={adminUsername}
+                    onChange={(event) => setAdminUsername(event.target.value)}
+                    placeholder="username to promote"
+                    className="input-field flex-1"
+                  />
+                  <button onClick={promote} className="rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300">
+                    Make admin
+                  </button>
+                  <button
+                    onClick={() => demote(adminUsername.trim())}
+                    className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100 transition hover:bg-amber-300/15"
+                  >
+                    Remove admin
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
         )}
       </main>

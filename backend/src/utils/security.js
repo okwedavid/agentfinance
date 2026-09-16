@@ -2,14 +2,19 @@
 
 export const ROLE_USER = 'USER';
 export const ROLE_ADMIN = 'ADMIN';
-export const VALID_ROLES = new Set([ROLE_USER, ROLE_ADMIN]);
+export const ROLE_SUPER_ADMIN = 'SUPER_ADMIN';
+export const VALID_ROLES = new Set([ROLE_USER, ROLE_ADMIN, ROLE_SUPER_ADMIN]);
 
 export function normalizeRole(value) {
   return VALID_ROLES.has(value) ? value : ROLE_USER;
 }
 
 export function isAdminRole(value) {
-  return value === ROLE_ADMIN;
+  return value === ROLE_ADMIN || value === ROLE_SUPER_ADMIN;
+}
+
+export function isSuperAdminRole(value) {
+  return value === ROLE_SUPER_ADMIN;
 }
 
 export function defaultRole() {
@@ -60,7 +65,8 @@ export function serializeUser(user, { isNewUser = false } = {}) {
     walletProfiles: user.walletProfiles || {},
     preferredNetwork: user.preferredNetwork || 'ethereum',
     role,
-    isAdmin: role === ROLE_ADMIN,
+    isAdmin: isAdminRole(role),
+    isSuperAdmin: role === ROLE_SUPER_ADMIN,
     isNewUser,
   };
 }

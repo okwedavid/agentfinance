@@ -79,6 +79,7 @@ export default function WalletPage() {
   const [payouts, setPayouts] = useState<any[]>([]);
   const [routingBusy, setRoutingBusy] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [connectingWallet, setConnectingWallet] = useState(false);
 
   const chain = useMemo(
     () => CHAINS.find((item) => item.id === chainId) || CHAINS[0],
@@ -164,18 +165,30 @@ export default function WalletPage() {
     }
   }
 
+  function injectedProvider() {
+    const ethereum = (window as any).ethereum;
+    if (Array.isArray(ethereum?.providers) && ethereum.providers.length > 0) {
+      return (
+        ethereum.providers.find((provider: any) => provider.isMetaMask) ||
+        ethereum.providers[0]
+      );
+    }
+    return ethereum;
+  }
+
   async function connectMetaMask() {
     if (chain.type !== "evm") {
       flash("Use a Bitcoin address manually for the Bitcoin network.");
       return;
     }
 
-    const provider = (window as any).ethereum;
+    const provider = injectedProvider();
     if (!provider) {
-      flash("MetaMask is not installed on this device.");
+      flash("No browser wallet found. Install MetaMask on this device first.");
       return;
     }
 
+    setConnectingWallet(true);
     try {
       if (chain.id === "bsc") {
         await provider.request({
@@ -188,6 +201,8 @@ export default function WalletPage() {
       if (accounts?.[0]) await connect(accounts[0]);
     } catch (error: any) {
       flash(error.message || "Wallet connection was cancelled.");
+    } finally {
+      setConnectingWallet(false);
     }
   }
 
@@ -368,9 +383,10 @@ export default function WalletPage() {
             <div className="mt-4 grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
               <button
                 onClick={connectMetaMask}
+                disabled={connectingWallet}
                 className={`rounded-[24px] border p-4 text-left transition hover:-translate-y-0.5 ${chain.type === "evm" ? "border-cyan-300/20 bg-[linear-gradient(135deg,rgba(34,211,238,0.18),rgba(59,130,246,0.10))]" : "border-white/8 bg-white/[0.03] opacity-70"}`}
               >
-                <div className="text-sm font-semibold text-white">{chain.type === "evm" ? "Connect browser wallet" : "Browser wallet unavailable"}</div>
+                <div className="text-sm font-semibold text-white">{chain.type === "evm" ? (connectingWallet ? "Connecting wallet..." : "Connect browser wallet") : "Browser wallet unavailable"}</div>
                 <div className="mt-1 text-xs text-slate-300">
                   {chain.type === "evm" ? `Use the injected wallet for ${chain.name}.` : "Bitcoin uses manual address entry in this release."}
                 </div>
@@ -505,6 +521,11 @@ export default function WalletPage() {
                       >
                         {approvingId === latestPayout.id ? "Approving payout" : "Approve payout"}
                       </button>
+                    )}
+                    {!isAdmin && latestPayout.status === "approval_required" && (
+                      <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                        Waiting for an admin to approve this payout.
+                      </div>
                     )}
                     {(latestPayout.status === "broadcasted" || latestPayout.status === "confirmed") && (
                       <button
