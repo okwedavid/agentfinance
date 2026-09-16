@@ -798,6 +798,7 @@ app.post('/payouts/:id/reject', authMiddleware, requireAdmin, async (req, res) =
     const payout = await rejectPayout({
       payoutId: req.params.id,
       userId: req.user.sub,
+      actorRole: req.userRole,
       reason: req.body?.reason,
     });
     res.json(payout);

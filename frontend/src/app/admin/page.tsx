@@ -256,7 +256,7 @@ export default function AdminPage() {
                 </div>
                 <div className="mt-3 space-y-1 text-sm text-slate-400">
                   <div>
-                    Requested by <span className="font-medium text-slate-200">{row.user?.displayName || row.user?.username || "Unknown user"}</span>
+                    Requested by <span className="font-medium text-slate-200">{row.requesterLabel || row.user?.displayName || row.user?.username || "Unknown user"}</span>
                     {row.user?.email ? <span className="text-slate-500"> ({row.user.email})</span> : null}
                   </div>
                   <div className="break-all">To <span className="font-mono text-slate-300">{row.recipientAddress}</span></div>

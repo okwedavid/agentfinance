@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { Wallet, JsonRpcProvider, parseEther, formatEther } from 'ethers';
 import prisma from '../prismaClient.js';
 import logger from '../utils/logger.js';
-import { validatePayoutAmount } from '../utils/security.js';
+import { ROLE_SUPER_ADMIN, validatePayoutAmount } from '../utils/security.js';
 
 const NETWORKS = {
   ethereum: {
@@ -429,8 +429,9 @@ export async function approvePayout({ payoutId, userId, approvalToken, actorRole
   const payout = await prisma.payout.findUnique({ where: { id: payoutId } });
   if (!payout) throw new Error('Payout not found.');
 
-  // An actor may never approve a payout they requested themselves.
-  if (payout.userId === userId) {
+  // Self-approval is blocked for everyone except the super admin: the owner
+  // may approve their own withdrawal, but admins cannot approve their own.
+  if (payout.userId === userId && actorRole !== ROLE_SUPER_ADMIN) {
     throw Object.assign(new Error('You cannot approve your own withdrawal request.'), { status: 403 });
   }
 
@@ -506,11 +507,12 @@ export async function approvePayout({ payoutId, userId, approvalToken, actorRole
   });
 }
 
-export async function rejectPayout({ payoutId, userId, reason }) {
+export async function rejectPayout({ payoutId, userId, actorRole, reason }) {
   const payout = await prisma.payout.findUnique({ where: { id: payoutId } });
   if (!payout) throw new Error('Payout not found.');
 
-  if (payout.userId === userId) {
+  // Mirrors approvePayout: only the super admin may reject their own request.
+  if (payout.userId === userId && actorRole !== ROLE_SUPER_ADMIN) {
     throw Object.assign(new Error('You cannot reject your own withdrawal request.'), { status: 403 });
   }
 
@@ -535,13 +537,16 @@ export async function listPayoutsForAdmin() {
     take: 100,
     include: {
       user: {
-        select: { id: true, username: true, email: true, displayName: true },
+        select: { id: true, username: true, email: true, displayName: true, role: true },
       },
     },
   });
 
   return rows.map((payout) => ({
     ...payout,
+    requesterLabel: payout.user?.role === ROLE_SUPER_ADMIN
+      ? 'super-admin'
+      : (payout.user?.displayName || payout.user?.username || 'Unknown user'),
     statusMeta: mapPayoutStatus(payout.status),
   }));
 }

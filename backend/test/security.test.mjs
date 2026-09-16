@@ -43,13 +43,15 @@ test('sanitizeRoleFromRecord never promotes untrusted roles', () => {
 });
 
 test('validateUsername accepts valid usernames and rejects everything else', () => {
-  assert.equal(validateUsername('okwedavid'), null);
+  assert.equal(validateUsername('okwedavid'), 'That username is reserved and cannot be used.');
   assert.equal(validateUsername('a1_b2_c3'), null);
   assert.equal(validateUsername('ab'), 'Username must be 3-32 characters using letters, numbers and underscores.');
   assert.equal(validateUsername('x'.repeat(33)), 'Username must be 3-32 characters using letters, numbers and underscores.');
   assert.equal(validateUsername('has space'), 'Username must be 3-32 characters using letters, numbers and underscores.');
   assert.equal(validateUsername('email@user.com'), 'Username must be 3-32 characters using letters, numbers and underscores.');
   assert.equal(validateUsername(undefined), 'Username must be 3-32 characters using letters, numbers and underscores.');
+  assert.equal(validateUsername('admin'), 'That username is reserved and cannot be used.');
+  assert.equal(validateUsername('super-admin'), 'That username is reserved and cannot be used.');
 });
 
 test('validateEmail accepts a valid email and rejects invalid ones, but stays optional', () => {

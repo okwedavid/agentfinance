@@ -12,6 +12,7 @@ import {
   sanitizeBlockchainError,
 } from '../src/services/payoutService.js';
 import { requireAdmin, requireRole, ROLE_ADMIN, ROLE_SUPER_ADMIN } from '../src/middleware/auth.js';
+import { RESERVED_USERNAMES, serializeUser, validateUsername } from '../src/utils/security.js';
 
 const ETH_ADDRESS = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 
@@ -187,7 +188,7 @@ test('a normal user cannot approve another user withdrawal', async () => {
   }
 });
 
-test('approvePayout refuses to approve your own withdrawal request', async () => {
+test('approvePayout blocks an ADMIN from approving their own withdrawal ', async () => {
   const stash = stashPrisma();
   try {
     prisma.payout = {
@@ -204,9 +205,41 @@ test('approvePayout refuses to approve your own withdrawal request', async () =>
     };
 
     await assert.rejects(
-      approvePayout({ payoutId: 'p1', userId: 'u1', approvalToken: 'tok', actorRole: ROLE_SUPER_ADMIN }),
+      approvePayout({ payoutId: 'p1', userId: 'u1', approvalToken: 'tok', actorRole: ROLE_ADMIN }),
       (err) => err.status === 403 && /own withdrawal/.test(err.message),
     );
+  } finally {
+    restorePrisma(stash);
+  }
+});
+
+test('approvePayout lets the SUPER_ADMIN approve their own withdrawal', async () => {
+  const stash = stashPrisma();
+  try {
+    prisma.payout = {
+      findUnique: async () => ({
+        id: 'p1',
+        userId: 'u1',
+        network: 'ethereum',
+        assetSymbol: 'ETH',
+        amount: '0.01',
+        recipientAddress: ETH_ADDRESS,
+        status: 'approval_required',
+        approvalToken: 'tok',
+      }),
+      update: async () => ({
+        id: 'p1',
+        status: 'blocked',
+        approvedAt: new Date(),
+        error: 'No EVM treasury private key is configured.',
+      }),
+    };
+
+    // No self-approval 403: the request passes the gate and proceeds to the
+    // signer/treasury check (blocked here because no treasury key in tests).
+    const result = await approvePayout({ payoutId: 'p1', userId: 'u1', approvalToken: 'tok', actorRole: ROLE_SUPER_ADMIN });
+    assert.equal(result.status, 'blocked');
+    assert.match(result.error, /No EVM treasury private key/);
   } finally {
     restorePrisma(stash);
   }
@@ -292,16 +325,31 @@ test('approvePayout refuses to approve an already rejected payout', async () => 
   }
 });
 
-test('rejectPayout refuses to reject your own request', async () => {
+test('rejectPayout blocks an ADMIN from rejecting their own request', async () => {
   const stash = stashPrisma();
   try {
     prisma.payout = {
       findUnique: async () => ({ id: 'p1', userId: 'u1', status: 'approval_required' }),
     };
     await assert.rejects(
-      rejectPayout({ payoutId: 'p1', userId: 'u1', reason: 'nope' }),
+      rejectPayout({ payoutId: 'p1', userId: 'u1', actorRole: ROLE_ADMIN, reason: 'nope' }),
       (err) => err.status === 403 && /own withdrawal/.test(err.message),
     );
+  } finally {
+    restorePrisma(stash);
+  }
+});
+
+test('rejectPayout lets the SUPER_ADMIN reject their own request', async () => {
+  const stash = stashPrisma();
+  try {
+    prisma.payout = {
+      findUnique: async () => ({ id: 'p1', userId: 'u1', status: 'approval_required' }),
+      update: async ({ data }) => data,
+    };
+    const result = await rejectPayout({ payoutId: 'p1', userId: 'u1', actorRole: ROLE_SUPER_ADMIN, reason: 'self-cancel' });
+    assert.equal(result.status, 'rejected');
+    assert.equal(result.error, 'self-cancel');
   } finally {
     restorePrisma(stash);
   }
@@ -314,7 +362,7 @@ test('rejectPayout marks another user request as rejected with a reason', async 
       findUnique: async () => ({ id: 'p1', userId: 'u2', status: 'approval_required' }),
       update: async ({ data }) => data,
     };
-    const result = await rejectPayout({ payoutId: 'p1', userId: 'u1', reason: 'Suspicious destination' });
+    const result = await rejectPayout({ payoutId: 'p1', userId: 'u1', actorRole: ROLE_ADMIN, reason: 'Suspicious destination' });
     assert.equal(result.status, 'rejected');
     assert.equal(result.error, 'Suspicious destination');
     assert.ok(result.rejectedAt instanceof Date);
@@ -330,7 +378,7 @@ test('rejectPayout blocks rejection of an already broadcast payout', async () =>
       findUnique: async () => ({ id: 'p1', userId: 'u2', status: 'broadcasted' }),
     };
     await assert.rejects(
-      rejectPayout({ payoutId: 'p1', userId: 'u1', reason: 'too late' }),
+      rejectPayout({ payoutId: 'p1', userId: 'u1', actorRole: ROLE_ADMIN, reason: 'too late' }),
       (err) => err.status === 409 && /cannot be rejected/.test(err.message),
     );
   } finally {
@@ -358,9 +406,64 @@ test('listPayoutsForAdmin joins the requesting user and maps status for display'
     };
     const rows = await listPayoutsForAdmin();
     assert.equal(rows[0].user.username, 'alice');
+    assert.equal(rows[0].requesterLabel, 'Alice');
     assert.equal(rows[0].statusMeta.key, 'pending_approval');
     assert.equal(rows[0].statusMeta.label, 'Pending approval');
   } finally {
     restorePrisma(stash);
   }
+});
+
+test('listPayoutsForAdmin labels the super admin request as super-admin', async () => {
+  const stash = stashPrisma();
+  try {
+    prisma.payout = {
+      findMany: async () => [
+        {
+          id: 'p2',
+          userId: 'u9',
+          network: 'ethereum',
+          assetSymbol: 'ETH',
+          amount: '0.01',
+          recipientAddress: ETH_ADDRESS,
+          status: 'approval_required',
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+          user: { id: 'u9', username: 'okwedavid', email: null, displayName: null, role: 'SUPER_ADMIN' },
+        },
+      ],
+    };
+    const rows = await listPayoutsForAdmin();
+    assert.equal(rows[0].requesterLabel, 'super-admin');
+  } finally {
+    restorePrisma(stash);
+  }
+});
+
+test('reserved usernames are rejected at registration time', () => {
+  for (const name of RESERVED_USERNAMES) {
+    assert.equal(validateUsername(name), 'That username is reserved and cannot be used.', `Expected ${name} to be reserved`);
+    assert.equal(validateUsername(name.toUpperCase()), 'That username is reserved and cannot be used.', `Expected ${name.toUpperCase()} to be reserved`);
+  }
+});
+
+test('non-reserved usernames pass validation', () => {
+  assert.equal(validateUsername('alice'), null);
+  assert.equal(validateUsername('operator42'), null);
+  assert.equal(validateUsername('super_ad'), null);
+  assert.equal(validateUsername('okwedavid2'), null);
+});
+
+test('serializeUser always presents the super admin as super-admin', () => {
+  const user = { id: 'u9', username: 'okwedavid', displayName: 'Dave', role: ROLE_SUPER_ADMIN };
+  const payload = serializeUser(user);
+  assert.equal(payload.displayName, 'super-admin');
+  assert.equal(payload.username, 'okwedavid');
+  assert.equal(payload.isSuperAdmin, true);
+});
+
+test('serializeUser preserves a custom displayName for non-super-admins', () => {
+  const user = { id: 'u1', username: 'alice', displayName: 'Alice A', role: ROLE_ADMIN };
+  const payload = serializeUser(user);
+  assert.equal(payload.displayName, 'Alice A');
+  assert.equal(payload.isSuperAdmin, false);
 });

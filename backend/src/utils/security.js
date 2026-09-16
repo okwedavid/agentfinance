@@ -29,8 +29,20 @@ export function sanitizeRoleFromRecord(user) {
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,32}$/;
 
+// These names can never be claimed by a new account. `admin`/`super-admin` are
+// reserved to prevent impersonation of privileged UI, and the owner account
+// name (okwedavid) is reserved so it always resolves to the super admin.
+export const RESERVED_USERNAMES = Object.freeze(['admin', 'super-admin', 'okwedavid']);
+
 export function validateUsername(username) {
-  if (typeof username !== 'string' || !USERNAME_RE.test(username.trim())) {
+  const trimmed = typeof username === 'string' ? username.trim() : '';
+  // Check reserved names first, before format validation: "super-admin" is
+  // blocked even though it contains a hyphen and would be rejected by the
+  // regex anyway — checking first gives a clear reserved-name error.
+  if (RESERVED_USERNAMES.includes(trimmed.toLowerCase())) {
+    return 'That username is reserved and cannot be used.';
+  }
+  if (!USERNAME_RE.test(trimmed)) {
     return 'Username must be 3-32 characters using letters, numbers and underscores.';
   }
   return null;
@@ -59,7 +71,9 @@ export function serializeUser(user, { isNewUser = false } = {}) {
     id: user.id,
     username: user.username,
     email: user.email || null,
-    displayName: user.displayName || null,
+    // The super admin always renders as "super-admin", never as the raw owner
+    // username (okwedavid). Any other account shows its own chosen name.
+    displayName: role === ROLE_SUPER_ADMIN ? 'super-admin' : (user.displayName || null),
     bio: user.bio || null,
     walletAddress: user.walletAddress || null,
     walletProfiles: user.walletProfiles || {},
