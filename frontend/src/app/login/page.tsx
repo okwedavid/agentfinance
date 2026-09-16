@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
-import { getOAuthProviders, isLoggedIn } from "@/lib/api";
+import { getOAuthProviders, isLoggedIn, API_BASE } from "@/lib/api";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Link from "next/link";
+import OAuthProviderButton, { type OAuthProvider } from "@/components/OAuthProviderButton";
 
 export default function LoginPage() {
   const { login, register } = useAuth();
@@ -15,7 +16,7 @@ export default function LoginPage() {
   const [password, setPass]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
-  const [providers, setProviders] = useState<{ id: string; displayName: string; configured: boolean }[]>([]);
+  const [providers, setProviders] = useState<OAuthProvider[]>([]);
 
   useEffect(() => {
     if (isLoggedIn()) window.location.href = '/dashboard';
@@ -24,7 +25,7 @@ export default function LoginPage() {
   useEffect(() => {
     getOAuthProviders()
       .then((data: any[]) => {
-        const list: { id: string; displayName: string; configured: boolean }[] = Array.isArray(data)
+        const list: OAuthProvider[] = Array.isArray(data)
           ? data.filter((item) => item && typeof item.id === "string")
           : [];
         const order = ["google", "facebook", "x"];
@@ -130,25 +131,13 @@ export default function LoginPage() {
                 <span className="h-px flex-1 bg-white/[0.06]" />
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">
-                {providers.map((p) =>
-                  p.configured ? (
-                    <a
-                      key={p.id}
-                      href={`${process.env.NEXT_PUBLIC_API_URL || ''}/auth/oauth/${p.id}/start`}
-                      className="rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-sm text-gray-300 transition hover:bg-white/[0.06] text-center"
-                    >
-                      Continue with {p.displayName}
-                    </a>
-                  ) : (
-                    <div
-                      key={p.id}
-                      title={`${p.displayName} login is not configured on the server yet.`}
-                      className="cursor-not-allowed rounded-xl border border-white/5 bg-white/[0.01] py-2.5 text-sm text-gray-600 text-center opacity-60"
-                    >
-                      {p.displayName} <span className="text-[10px] text-gray-700">unavailable</span>
-                    </div>
-                  ),
-                )}
+                {providers.map((p) => (
+                  <OAuthProviderButton
+                    key={p.id}
+                    provider={p}
+                    href={`${API_BASE}/auth/oauth/${p.id}/start`}
+                  />
+                ))}
               </div>
             </>
           )}

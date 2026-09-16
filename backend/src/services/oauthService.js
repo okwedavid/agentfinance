@@ -4,9 +4,17 @@
 // No provider credentials are hardcoded and no fake OAuth is performed here.
 // A provider is only "configured" when BOTH <PROVIDER>_CLIENT_ID and
 // <PROVIDER>_CLIENT_SECRET exist in the server environment. Unconfigured
-// providers fail gracefully (the login UI hides them and the API returns a
+// providers fail gracefully (the login UI disables them and the API returns a
 // clear "not configured" error). The normal username+password login is never
 // affected by these settings.
+//
+// PHASE 1:
+// - The callback completes with a redirect back to the frontend with the signed
+//   token in a URL *fragment* (#access_token=...), so the token is never sent
+//   in another HTTP request or stored in server logs.
+// - Users are linked by a stable per-provider subject id (oauthId). Email is
+//   used as a secondary link for accounts created before per-provider ids, and
+//   for providers that return one.
 
 const PROVIDERS = {
   google: {
@@ -33,11 +41,11 @@ const PROVIDERS = {
   x: {
     id: 'x',
     displayName: 'X',
-    scope: 'users.read tweet.read',
+    scope: 'users.read tweet.read email',
     authUrl: 'https://twitter.com/i/oauth2/authorize',
     tokenUrl: 'https://api.twitter.com/2/oauth2/token',
     userInfoUrl: 'https://api.twitter.com/2/users/me',
-    userInfoFields: 'id,name,username,email',
+    userInfoFields: 'id,name,username,email,profile_image_url',
     clientIdEnv: 'X_CLIENT_ID',
     clientSecretEnv: 'X_CLIENT_SECRET',
   },
@@ -131,9 +139,30 @@ export async function exchangeCode(providerId, code, redirectUri) {
   return data.access_token;
 }
 
-export async function fetchOAuthUserInfo(providerId, accessToken) {
+export function fetchOAuthUserInfo(providerId, accessToken) {
   const provider = getOAuthProvider(providerId);
   if (!provider) throw new Error(`Unknown OAuth provider '${providerId}'.`);
+
+  if (provider.id === 'x') {
+    // Twitter/X API v2: /users/me returns id/name/username by default. Email and
+    // avatar need to be requested explicitly with user.fields and are only
+    // returned when the app has the required permission (some apps never receive
+    // email). The id is always present, so it remains a stable identity key.
+    const params = new URLSearchParams();
+    if (provider.userInfoFields) params.set('user.fields', provider.userInfoFields);
+    return fetch(`${provider.userInfoUrl}?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(`OAuth profile lookup failed (${response.status}).`);
+      }
+      const profile = data.data || {};
+      const email = (profile.email || '').trim().toLowerCase() || null;
+      const name = (profile.name || profile.username || '').trim() || null;
+      return { providerId: provider.id, providerSubject: profile.id || null, email, name, avatar: profile.profile_image_url || null };
+    });
+  }
 
   let url = provider.userInfoUrl;
   const headers = { Authorization: `Bearer ${accessToken}` };
@@ -148,14 +177,27 @@ export async function fetchOAuthUserInfo(providerId, accessToken) {
     url = `${provider.userInfoUrl}?${provider.userInfoFields}`;
   }
 
-  const response = await fetch(url, { headers });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(`OAuth profile lookup failed (${response.status}).`);
+  return fetch(url, { headers }).then(async (response) => {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`OAuth profile lookup failed (${response.status}).`);
+    }
+    const email = (data.email || '').trim().toLowerCase() || null;
+    const name = (data.name || data.username || '').trim() || null;
+    return { providerId: provider.id, providerSubject: data.id || null, email, name, avatar: data.picture || null };
+  });
+}
+
+/**
+ * The frontend origin that completes the OAuth popup/direct flow. The callback
+ * redirects the browser here with the session token in the URL fragment.
+ */
+export function resolveOauthSuccessUrl() {
+  const value = obj(process.env.OAUTH_SUCCESS_URL) || obj(process.env.FRONTEND_URL);
+  if (!value) {
+    throw new Error(
+      'OAuth login cannot complete: set OAUTH_SUCCESS_URL (or FRONTEND_URL) to the frontend origin (e.g. https://agentfinance.onrender.com).',
+    );
   }
-
-  const email = (data.email || '').trim().toLowerCase() || null;
-  const name = (data.name || data.username || '').trim() || null;
-
-  return { providerId: provider.id, email, name, raw: data };
+  return value.replace(/\/+$/, '');
 }

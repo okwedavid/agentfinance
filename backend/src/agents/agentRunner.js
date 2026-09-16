@@ -1,142 +1,35 @@
 /**
  * agentRunner.js
- * Uses ALL your API keys with intelligent cascade fallback.
- * Priority: Groq → Google Gemini → Anthropic → OpenRouter → Together → Mistral → Cerebras
+ * Reliable multi-provider agent execution (Phase 1).
  *
- * This prevents rate limits because when one provider hits its limit,
- * it automatically tries the next one.
+ * Primary provider is selected from the environment (LLM_PROVIDER, or the first
+ * configured provider). Transient failures are retried a bounded number of
+ * times, then an optional fallback provider (LLM_FALLBACK_PROVIDER) is tried,
+ * then the task fails with a normalized, safe error. A global task timeout
+ * (AGENT_TASK_TIMEOUT_MS) is enforced end-to-end and aborts in-flight requests.
  */
 import { executeTool as executeStructuredTool } from '../tools/toolExecutor.js';
+import {
+  callProvider,
+  fallbackProvider,
+  primaryProvider,
+  ProviderError,
+  PROVIDER_ERROR,
+  safeMessageFor,
+} from '../services/llmProvider.js';
 
-// ── Provider configs ────────────────────────────────────────────────────────
-const PROVIDERS = [
-  {
-    name: 'Groq',
-    apiKey: () => process.env.GROQ_API_KEY,
-    url: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile',
-    format: 'openai',
-    maxTokens: 4096,
-  },
-  {
-    name: 'Google',
-    apiKey: () => process.env.GOOGLE_AI_API_KEY,
-    url: () => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GOOGLE_AI_API_KEY}`,
-    model: 'gemini-2.0-flash',
-    format: 'google',
-    maxTokens: 4096,
-  },
-  {
-    name: 'Anthropic',
-    apiKey: () => process.env.ANTHROPIC_API_KEY,
-    url: 'https://api.anthropic.com/v1/messages',
-    model: 'claude-haiku-4-5-20251001',
-    format: 'anthropic',
-    maxTokens: 4096,
-  },
-  {
-    name: 'OpenRouter',
-    apiKey: () => process.env.OPENROUTER_API_KEY,
-    url: 'https://openrouter.ai/api/v1/chat/completions',
-    model: 'meta-llama/llama-3.1-8b-instruct:free',
-    format: 'openai',
-    maxTokens: 2048,
-  },
-  {
-    name: 'Together',
-    apiKey: () => process.env.TOGETHER_API_KEY,
-    url: 'https://api.together.xyz/v1/chat/completions',
-    model: 'meta-llama/Llama-3-8b-chat-hf',
-    format: 'openai',
-    maxTokens: 2048,
-  },
-  {
-    name: 'Mistral',
-    apiKey: () => process.env.MISTRAL_API_KEY,
-    url: 'https://api.mistral.ai/v1/chat/completions',
-    model: 'mistral-small-latest',
-    format: 'openai',
-    maxTokens: 2048,
-  },
-  {
-    name: 'Cerebras',
-    apiKey: () => process.env.CEREBRAS_API_KEY,
-    url: 'https://api.cerebras.ai/v1/chat/completions',
-    model: 'llama3.1-8b',
-    format: 'openai',
-    maxTokens: 2048,
-  },
-];
+export const DEFAULT_TASK_TIMEOUT_MS = 120_000;
+export const DEFAULT_PROVIDER_RETRIES = 2;
+const MAX_SINGLE_REQUEST_MS = 60_000;
 
-// ── Tool definitions for agent use ──────────────────────────────────────────
-const TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'search_web',
-      description: 'Search the web for current information',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Search query' },
-        },
-        required: ['query'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'fetch_crypto_price',
-      description: 'Get current price and 24h change for a cryptocurrency',
-      parameters: {
-        type: 'object',
-        properties: {
-          coin: { type: 'string', description: 'Coin ID e.g. bitcoin, ethereum, solana' },
-        },
-        required: ['coin'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'fetch_defi_yields',
-      description: 'Get current DeFi yield rates from major protocols',
-      parameters: {
-        type: 'object',
-        properties: {
-          protocol: { type: 'string', description: 'Protocol name e.g. aave, compound, curve, yearn' },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'fetch_market_overview',
-      description: 'Get crypto market overview including top gainers and fear/greed index',
-      parameters: { type: 'object', properties: {}, required: [] },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'analyse_opportunity',
-      description: 'Analyse and score a potential income opportunity',
-      parameters: {
-        type: 'object',
-        properties: {
-          opportunity: { type: 'string', description: 'Description of the opportunity' },
-          risk_level: { type: 'string', enum: ['low', 'medium', 'high'] },
-          estimated_apy: { type: 'number', description: 'Estimated APY percentage' },
-        },
-        required: ['opportunity'],
-      },
-    },
-  },
-];
+function envInt(name, fallback) {
+  const parsed = Number.parseInt(process.env[name], 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function safeJson(value) {
   if (typeof value !== 'string') return value;
@@ -155,7 +48,7 @@ function cleanPlainText(value = '') {
     .trim();
 }
 
-// ── Tool executor ────────────────────────────────────────────────────────────
+// ── Tool executor (used when a Groq tool-use model issues tool_calls) ────────
 async function executeTool(name, args) {
   try {
     switch (name) {
@@ -203,7 +96,6 @@ async function executeTool(name, args) {
             result: `${coin.toUpperCase()} price: $${d[coin].usd?.toLocaleString()} | 24h change: ${d[coin].usd_24h_change?.toFixed(2)}%`
           };
         }
-        // Try CMC fallback
         if (process.env.CMC_API_KEY) {
           const cmcR = await fetch(`https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=${coin.toUpperCase()}`, {
             headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY },
@@ -219,7 +111,6 @@ async function executeTool(name, args) {
       }
 
       case 'fetch_defi_yields': {
-        // DeFiLlama - completely free, no key needed
         const r = await fetch('https://yields.llama.fi/pools', { signal: AbortSignal.timeout(8000) });
         const d = await r.json();
         const pools = (d.data || [])
@@ -270,160 +161,83 @@ async function executeTool(name, args) {
   }
 }
 
-// ── Call a single provider ───────────────────────────────────────────────────
-async function callProvider(provider, messages, useTools = false) {
-  const key = provider.apiKey();
-  if (!key) throw new Error(`${provider.name}: API key not set`);
+const systemPrompts = {
+  research: `You are a DeFi and crypto research agent. You have access to real-time market data tools.
+Your job is to find and analyse income-generating opportunities in the crypto/DeFi ecosystem.
+Be specific: name protocols, give APY numbers, explain risks clearly.
+Always end with a concrete recommendation the user can act on.`,
 
-  if (provider.format === 'google') {
-    // Google Gemini format
-    const contents = messages
-      .filter(m => m.role !== 'system')
-      .map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }],
-      }));
+  trading: `You are a crypto trading and arbitrage agent with access to live price data.
+Find arbitrage opportunities between exchanges, yield farming strategies, and trading setups.
+Calculate realistic profit estimates. Include specific entry points, risk levels, and expected returns.
+Always remind users to verify before executing any trades.`,
 
-    const systemMsg = messages.find(m => m.role === 'system');
+  content: `You are a crypto content creation agent. You write high-quality, engaging content about crypto and DeFi.
+The content should be informative, well-structured, and ready to publish.
+Include relevant statistics, clear explanations, and actionable insights.`,
 
-    const body = {
-      contents,
-      ...(systemMsg ? { systemInstruction: { parts: [{ text: systemMsg.content }] } } : {}),
-      generationConfig: { maxOutputTokens: provider.maxTokens, temperature: 0.7 },
-    };
+  execution: `You are a blockchain transaction agent. You prepare and analyse on-chain transactions.
+When asked to route earnings or check balances, provide step-by-step instructions.
+Always explain what a transaction will do before suggesting execution.`,
 
-    const r = await fetch(provider.url(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
-    });
+  coordinator: `You are an AI financial agent coordinator helping users generate income with crypto/DeFi.
+You have access to market data, search, and analysis tools.
+Provide detailed, actionable analysis with specific numbers and recommendations.`,
+};
 
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      throw new Error(`${provider.name} HTTP ${r.status}: ${err.error?.message || r.statusText}`);
+/**
+ * Try one provider with bounded retries for transient failures.
+ * Returns { content, provider, model } or throws ProviderError.
+ */
+async function attemptProvider(spec, messages, { useTools, deadline, signal }) {
+  const maxRetries = envInt('AGENT_PROVIDER_RETRIES', DEFAULT_PROVIDER_RETRIES);
+  let errors = [];
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new ProviderError(PROVIDER_ERROR.TIMEOUT, 'Agent task timed out.', { provider: spec.id });
     }
 
-    const data = await r.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error(`${provider.name}: empty response`);
-    return { content: text, provider: provider.name };
+    const timeoutMs = Math.min(remaining, MAX_SINGLE_REQUEST_MS);
+    try {
+      return await callProvider(spec, messages, { useTools, timeoutMs, signal, executeTool });
+    } catch (err) {
+      errors.push(err instanceof ProviderError ? err : new ProviderError(PROVIDER_ERROR.UNAVAILABLE, String(err), { provider: spec.id }));
 
-  } else if (provider.format === 'anthropic') {
-    const systemMsg = messages.find(m => m.role === 'system')?.content;
-    const userMessages = messages.filter(m => m.role !== 'system');
+      const lastError = errors[errors.length - 1];
+      const canRetry = lastError.retryable && attempt < maxRetries;
+      if (!canRetry) break;
 
-    const body = {
-      model: provider.model,
-      max_tokens: provider.maxTokens,
-      messages: userMessages,
-      ...(systemMsg ? { system: systemMsg } : {}),
-    };
-
-    const r = await fetch(provider.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
-    });
-
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      throw new Error(`${provider.name} HTTP ${r.status}: ${err.error?.message}`);
+      const backoff = Math.min(600 * (attempt + 1), remaining - 1);
+      if (backoff <= 0) break;
+      await sleep(backoff);
     }
-
-    const data = await r.json();
-    const text = data.content?.[0]?.text;
-    if (!text) throw new Error(`${provider.name}: empty response`);
-    return { content: text, provider: provider.name };
-
-  } else {
-    // OpenAI-compatible format (Groq, OpenRouter, Together, Mistral, Cerebras)
-    const body = {
-      model: provider.model,
-      messages,
-      max_tokens: provider.maxTokens,
-      temperature: 0.7,
-      ...(useTools && provider.name === 'Groq' ? { tools: TOOLS } : {}),
-    };
-
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-    };
-
-    // OpenRouter needs extra headers
-    if (provider.name === 'OpenRouter') {
-      headers['HTTP-Referer'] = 'https://agentfinance.onrender.com';
-      headers['X-Title'] = 'AgentFinance';
-    }
-
-    const r = await fetch(provider.url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
-    });
-
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      const errMsg = err.error?.message || err.message || r.statusText;
-      throw new Error(`${provider.name} HTTP ${r.status}: ${errMsg}`);
-    }
-
-    const data = await r.json();
-    const choice = data.choices?.[0];
-
-    // Handle tool calls (Groq only for now)
-    if (choice?.finish_reason === 'tool_calls' && choice?.message?.tool_calls) {
-      const toolResults = [];
-      for (const tc of choice.message.tool_calls) {
-        let args;
-        try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
-        const result = await executeTool(tc.function.name, args);
-        toolResults.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: JSON.stringify(result),
-        });
-      }
-
-      // Continue conversation with tool results
-      const continueBody = {
-        model: provider.model,
-        messages: [...messages, choice.message, ...toolResults],
-        max_tokens: provider.maxTokens,
-        temperature: 0.7,
-      };
-      const r2 = await fetch(provider.url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(continueBody),
-        signal: AbortSignal.timeout(30000),
-      });
-      const d2 = await r2.json();
-      const text2 = d2.choices?.[0]?.message?.content;
-      return { content: text2 || 'Task completed', provider: provider.name };
-    }
-
-    const text = choice?.message?.content;
-    if (!text) throw new Error(`${provider.name}: empty response`);
-    return { content: text, provider: provider.name };
   }
+
+  throw errors[errors.length - 1];
 }
 
-// ── Main agent runner — cascade through all providers ────────────────────────
-export async function runAgent({ action, agentType = 'coordinator', walletAddress = null }) {
+/**
+ * Run the agent to completion.
+ *
+ * @param {object} opts
+ * @param {string} opts.action task prompt
+ * @param {string} [opts.agentType]
+ * @param {string|null} [opts.walletAddress]
+ * @param {AbortSignal} [opts.signal] global task abort signal (timeout)
+ * @param {number} [opts.timeoutMs] overall task budget
+ */
+export async function runAgent({ action, agentType = 'coordinator', walletAddress = null, signal = null, timeoutMs = null }) {
+  const taskTimeoutMs = timeoutMs || envInt('AGENT_TASK_TIMEOUT_MS', DEFAULT_TASK_TIMEOUT_MS);
+  const deadline = Date.now() + taskTimeoutMs;
+
   if (agentType === 'execution') {
     const actionText = action || '';
     const routingMatch = actionText.match(/([0-9]+(?:\.[0-9]+)?)\s*ETH/i);
 
     const liveBalance = walletAddress
-      ? await executeStructuredTool('check_wallet_balance', { wallet_address: walletAddress, tokens: ['ETH'] })
+      ? await executeStructuredTool('check_wallet_balance', { wallet_address: walletAddress, tokens: ['ETH'] }, { signal })
       : JSON.stringify({ error: 'No wallet connected' });
 
     if (/route|sweep|transfer|wallet/i.test(actionText)) {
@@ -434,7 +248,7 @@ export async function runAgent({ action, agentType = 'coordinator', walletAddres
             amount: routingMatch?.[1] || '0.0000',
             recipient_address: walletAddress,
             network: 'ethereum',
-          })
+          }, { signal })
         : JSON.stringify({ error: 'No wallet connected' });
 
       const output = JSON.stringify({
@@ -464,79 +278,68 @@ export async function runAgent({ action, agentType = 'coordinator', walletAddres
     }
   }
 
-  const systemPrompts = {
-    research: `You are a DeFi and crypto research agent. You have access to real-time market data tools.
-Your job is to find and analyse income-generating opportunities in the crypto/DeFi ecosystem.
-Be specific: name protocols, give APY numbers, explain risks clearly.
-Always end with a concrete recommendation the user can act on.`,
-
-    trading: `You are a crypto trading and arbitrage agent with access to live price data.
-Find arbitrage opportunities between exchanges, yield farming strategies, and trading setups.
-Calculate realistic profit estimates. Include specific entry points, risk levels, and expected returns.
-Always remind users to verify before executing any trades.`,
-
-    content: `You are a crypto content creation agent. You write high-quality, engaging content about crypto and DeFi.
-The content should be informative, well-structured, and ready to publish.
-Include relevant statistics, clear explanations, and actionable insights.`,
-
-    execution: `You are a blockchain transaction agent. You prepare and analyse on-chain transactions.
-When asked to route earnings or check balances, provide step-by-step instructions.
-Always explain what a transaction will do before suggesting execution.
-Current wallet: ${walletAddress || 'none connected'}.`,
-
-    coordinator: `You are an AI financial agent coordinator helping users generate income with crypto/DeFi.
-You have access to market data, search, and analysis tools.
-Provide detailed, actionable analysis with specific numbers and recommendations.`,
-  };
-
   const messages = [
-    {
-      role: 'system',
-      content: systemPrompts[agentType] || systemPrompts.coordinator,
-    },
-    {
-      role: 'user',
-      content: action,
-    },
+    { role: 'system', content: systemPrompts[agentType] || systemPrompts.coordinator },
+    { role: 'user', content: action },
   ];
 
-  const errors = [];
+  const primary = primaryProvider();
+  if (!primary) {
+    throw new ProviderError(
+      PROVIDER_ERROR.CONFIGURATION,
+      'No AI provider is configured. Set one of GROQ_API_KEY, GOOGLE_AI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY, TOGETHER_API_KEY, MISTRAL_API_KEY or CEREBRAS_API_KEY.',
+    );
+  }
 
-  // Try each provider in order
-  for (const provider of PROVIDERS) {
-    if (!provider.apiKey()) {
-      errors.push(`${provider.name}: key not configured`);
-      continue;
-    }
+  const secondary = fallbackProvider(primary);
+  const failures = [];
+
+  async function tryProvider(spec) {
     try {
-      console.log(`[AgentRunner] Trying ${provider.name}…`);
-      const result = await callProvider(provider, messages, true);
-      console.log(`[AgentRunner] ✅ ${provider.name} succeeded`);
-      return {
-        success: true,
-        output: result.content,
-        provider: result.provider,
-        agentType,
-      };
+      return await attemptProvider(spec, messages, { useTools: true, deadline, signal });
     } catch (err) {
-      const msg = err.message || String(err);
-      console.warn(`[AgentRunner] ❌ ${provider.name} failed: ${msg}`);
-      errors.push(`${provider.name}: ${msg}`);
-
-      // If rate limited, try next immediately
-      // If auth error (wrong key), try next
-      // If timeout, try next
-      continue;
+      const providerError = err instanceof ProviderError
+        ? err
+        : new ProviderError(PROVIDER_ERROR.UNAVAILABLE, String(err), { provider: spec.id });
+      providerError.provider = providerError.provider || spec.id;
+      failures.push({
+        provider: spec.id,
+        category: providerError.category,
+        status: providerError.status || null,
+        message: providerError.message,
+      });
+      return null;
     }
   }
 
-  // All providers failed
-  const summary = errors.join(' | ');
-  console.error('[AgentRunner] All providers failed:', summary);
-  throw new Error(
-    `All AI providers failed. Errors: ${summary}. ` +
-    'Check Railway backend env vars: GROQ_API_KEY, GOOGLE_AI_API_KEY, OPENROUTER_API_KEY, ANTHROPIC_API_KEY'
+  // Primary provider.
+  let result = await tryProvider(primary);
+  // Fallback provider (only tried when the primary failed).
+  if (!result && secondary) {
+    result = await tryProvider(secondary);
+  }
+
+  if (result) {
+    return {
+      success: true,
+      output: result.content,
+      provider: result.provider,
+      model: result.model || null,
+      agentType,
+    };
+  }
+
+  const firstFailure = failures[0] || { provider: null, category: PROVIDER_ERROR.UNAVAILABLE };
+  const error = new ProviderError(
+    firstFailure.category,
+    safeMessageFor(firstFailure.category, firstFailure.provider),
+    { provider: firstFailure.provider },
   );
+  error.diagnostics = failures;
+
+  const summary = failures.map((f) => `${f.provider}:${f.category}`).join(', ');
+  console.error(`[AgentRunner] All AI providers failed (${summary}).`);
+  throw error;
 }
 
 export default runAgent;

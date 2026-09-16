@@ -31,6 +31,7 @@ model User {
   id            String   @id @default(cuid())
   username      String   @unique
   email         String?  @unique
+  oauthId       String?  @unique
   passwordHash  String
   role          String   @default("USER") // USER | ADMIN | SUPER_ADMIN, server-authoritative
   displayName   String?

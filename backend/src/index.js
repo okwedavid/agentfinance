@@ -32,7 +32,11 @@ import oauthRouter from './routes/oauth.js';
 import rateLimit from './middleware/rateLimit.js';
 import errorHandler from './middleware/errorHandler.js';
 import logger from './utils/logger.js';
-import runAgent from './agents/agentRunner.js';
+import { executeAgentTask } from './services/agentService.js';
+import { fallbackProvider, primaryProvider, providerModel } from './services/llmProvider.js';
+import {
+  DEFAULT_TASK_TIMEOUT_MS as DEFAULT_TIMEOUT_MS,
+} from './agents/agentRunner.js';
 import {
   approvePayout,
   listPayouts,
@@ -187,15 +191,6 @@ async function publish(channel, payload) {
   await redis.publish(channel, JSON.stringify(payload));
 }
 
-function classifyAgent(action = '') {
-  const text = action.toLowerCase();
-  if (/(trade|arbitrage|swap|buy|sell)/.test(text)) return 'trading';
-  if (/(write|newsletter|article|thread|content|youtube|tweet)/.test(text)) return 'content';
-  if (/(send|transfer|route|sweep|wallet|balance|gas)/.test(text)) return 'execution';
-  if (/(research|find|analyse|analyze|best|top|yield|market)/.test(text)) return 'research';
-  return 'coordinator';
-}
-
 function sanitizeTask(task) {
   const parsedResult = parseTaskResult(task.result);
   const summary = summariseTaskResult(parsedResult);
@@ -206,55 +201,22 @@ function sanitizeTask(task) {
   };
 }
 
-async function runTaskInline(task) {
-  await prisma.task.update({
-    where: { id: task.id },
-    data: { status: 'running', startedAt: new Date() },
-  });
-  await publish('agentfi:tasks', {
-    type: 'task:running',
-    data: { id: task.id, status: 'running', agentType: classifyAgent(task.action) },
-  });
-
-  const user = task.userId
-    ? await prisma.user.findUnique({ where: { id: task.userId } }).catch(() => null)
-    : null;
-  const profiles = user?.walletProfiles && typeof user.walletProfiles === 'object' ? user.walletProfiles : {};
-  const activeWallet = profiles?.[user?.preferredNetwork || 'ethereum'] || user?.walletAddress || null;
-
+function llmRuntimeStatus() {
+  let primary = null;
+  let fallback = null;
   try {
-    const result = await runAgent({
-      action: task.action,
-      agentType: classifyAgent(task.action),
-      walletAddress: activeWallet,
-    });
-
-    const updated = await prisma.task.update({
-      where: { id: task.id },
-      data: {
-        status: 'completed',
-        completedAt: new Date(),
-        result: JSON.stringify({
-          output: result.output,
-          summary: summariseTaskResult(result.output).slice(0, 1200) || '',
-          provider: result.provider,
-          agentType: result.agentType,
-        }),
-      },
-    });
-
-    await publish('agentfi:tasks', { type: 'task:completed', data: sanitizeTask(updated) });
+    const p = primaryProvider();
+    primary = p ? { id: p.id, model: providerModel(p) } : null;
   } catch (error) {
-    const updated = await prisma.task.update({
-      where: { id: task.id },
-      data: {
-        status: 'failed',
-        completedAt: new Date(),
-        result: JSON.stringify({ error: error.message }),
-      },
-    });
-    await publish('agentfi:tasks', { type: 'task:failed', data: sanitizeTask(updated) });
+    primary = { error: error.message };
   }
+  try {
+    const f = fallbackProvider(primary?.id ? { id: primary.id } : null);
+    fallback = f ? { id: f.id, model: providerModel(f) } : null;
+  } catch (error) {
+    fallback = { error: error.message };
+  }
+  return { primary, fallback, timeoutMs: process.env.AGENT_TASK_TIMEOUT_MS || DEFAULT_TIMEOUT_MS };
 }
 
 app.get('/health', async (req, res) => {
@@ -271,6 +233,7 @@ app.get('/health', async (req, res) => {
     time: Date.now(),
     db,
     redis: redis ? 'configured' : 'disabled',
+    llm: llmRuntimeStatus(),
     agentsConfigured: (process.env.AGENTS || '')
       .split(',')
       .map((value) => value.trim())
@@ -310,6 +273,7 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
   res.json({
     providers: providerFlags,
     providerCount: Object.values(providerFlags).filter(Boolean).length,
+    llm: llmRuntimeStatus(),
     redis: !!redis,
     queueEnabled: !!taskQueue,
     fleet,
@@ -589,14 +553,19 @@ app.post('/tasks', authMiddleware, async (req, res) => {
         'processTask',
         { taskId: task.id, action, userId: req.user.sub, agentId: agentId || null },
         {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 2000 },
+          attempts: 1,
           removeOnComplete: { count: 100 },
           removeOnFail: { count: 50 },
         },
       );
     } else {
-      void runTaskInline(task);
+      void executeAgentTask({
+        taskId: task.id,
+        action,
+        userId: req.user.sub,
+        agentId: agentId || null,
+        publish: (type, data) => publish('agentfi:tasks', { type, data }),
+      });
     }
 
     res.json(sanitizeTask(task));
