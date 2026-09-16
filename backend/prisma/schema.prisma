@@ -151,6 +151,7 @@ model Payout {
   approvedAt       DateTime?
   broadcastAt      DateTime?
   confirmedAt      DateTime?
+  rejectedAt       DateTime?
   updatedAt        DateTime @updatedAt
 }
 

@@ -17,6 +17,12 @@ import {
   saveWalletAddress,
 } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import {
+  detectInjectedProviders,
+  NO_WALLET_MESSAGE,
+  requestWalletAccounts,
+  switchWalletNetwork,
+} from "@/lib/walletProviders";
 
 const CHAINS = [
   { id: "ethereum", name: "Ethereum", symbol: "ETH", type: "evm", explorer: "https://etherscan.io/address/" },
@@ -49,19 +55,32 @@ function isValidAddress(address: string, chainType: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(value);
 }
 
+const STATUS_TONES: Record<string, string> = {
+  confirmed: "bg-emerald-400/10 text-emerald-100 border-emerald-300/20",
+  broadcasted: "bg-cyan-400/10 text-cyan-100 border-cyan-300/20",
+  approval_required: "bg-amber-400/10 text-amber-100 border-amber-300/20",
+  rejected: "bg-rose-400/10 text-rose-100 border-rose-300/20",
+  failed: "bg-rose-400/10 text-rose-100 border-rose-300/20",
+  blocked: "bg-slate-400/10 text-slate-100 border-slate-300/20",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  confirmed: "Completed",
+  broadcasted: "Processing",
+  approval_required: "Pending approval",
+  rejected: "Rejected",
+  failed: "Failed",
+  blocked: "Blocked",
+};
+
 function PayoutStatusPill({ status }: { status: string }) {
-  const tone =
-    status === "confirmed"
-      ? "bg-emerald-400/10 text-emerald-100 border-emerald-300/20"
-      : status === "broadcasted"
-        ? "bg-cyan-400/10 text-cyan-100 border-cyan-300/20"
-        : status === "approval_required"
-          ? "bg-amber-400/10 text-amber-100 border-amber-300/20"
-          : "bg-rose-400/10 text-rose-100 border-rose-300/20";
+  const tone = STATUS_TONES[status] || "bg-slate-400/10 text-slate-100 border-slate-300/20";
+  const label = STATUS_LABELS[status] || status?.replace(/_/g, " ") || "Unknown";
 
   return (
-    <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] ${tone}`}>
-      {status}
+    <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] ${tone}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${status === "approval_required" ? "animate-pulse bg-amber-300" : status === "broadcasted" ? "animate-pulse bg-cyan-300" : "bg-current"}`} />
+      {label}
     </span>
   );
 }
@@ -80,6 +99,8 @@ export default function WalletPage() {
   const [routingBusy, setRoutingBusy] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [connectingWallet, setConnectingWallet] = useState(false);
+  const [walletOptions, setWalletOptions] = useState<any[]>([]);
+  const [showWalletPicker, setShowWalletPicker] = useState(false);
 
   const chain = useMemo(
     () => CHAINS.find((item) => item.id === chainId) || CHAINS[0],
@@ -165,39 +186,37 @@ export default function WalletPage() {
     }
   }
 
-  function injectedProvider() {
-    const ethereum = (window as any).ethereum;
-    if (Array.isArray(ethereum?.providers) && ethereum.providers.length > 0) {
-      return (
-        ethereum.providers.find((provider: any) => provider.isMetaMask) ||
-        ethereum.providers[0]
-      );
-    }
-    return ethereum;
-  }
-
-  async function connectMetaMask() {
+  function openWalletPicker() {
     if (chain.type !== "evm") {
       flash("Use a Bitcoin address manually for the Bitcoin network.");
       return;
     }
+    const options = detectInjectedProviders((window as any).ethereum);
+    setWalletOptions(options);
+    setShowWalletPicker(true);
+  }
 
-    const provider = injectedProvider();
+  async function connectProvider(provider: any) {
+    setShowWalletPicker(false);
     if (!provider) {
-      flash("No browser wallet found. Install MetaMask on this device first.");
+      flash(NO_WALLET_MESSAGE);
       return;
     }
 
     setConnectingWallet(true);
     try {
-      if (chain.id === "bsc") {
-        await provider.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x38" }],
-        }).catch(() => null);
+      if (chain.id && (window as any).ethereum) {
+        const hexChainId = {
+          ethereum: "0x1",
+          polygon: "0x89",
+          arbitrum: "0xa4b1",
+          base: "0x2105",
+          bsc: "0x38",
+        }[chain.id];
+        if (hexChainId) await switchWalletNetwork(provider, hexChainId);
       }
 
-      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      const accounts = await requestWalletAccounts(provider);
       if (accounts?.[0]) await connect(accounts[0]);
     } catch (error: any) {
       flash(error.message || "Wallet connection was cancelled.");
@@ -316,9 +335,17 @@ export default function WalletPage() {
                 <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Selected network</div>
                 <div className="mt-2 text-base font-semibold text-white">{chain.name}</div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className={`rounded-2xl border p-3 ${parseFloat(pendingEarnings) > 0 ? "border-amber-300/20 bg-amber-400/10" : "border-white/10 bg-white/5"}`}>
                 <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Pending routing</div>
-                <div className="mt-2 text-base font-semibold text-white">{pendingEarnings} {chain.symbol}</div>
+                <div className={`mt-2 text-lg font-bold ${parseFloat(pendingEarnings) > 0 ? "text-amber-100" : "text-base font-semibold text-white"}`}>
+                  {pendingEarnings} <span className="text-xs font-semibold opacity-70">{chain.symbol}</span>
+                </div>
+                {parseFloat(pendingEarnings) > 0 && (
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-amber-200/80">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" />
+                    Awaiting approval
+                  </div>
+                )}
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
                 <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Lifetime routed</div>
@@ -382,15 +409,47 @@ export default function WalletPage() {
 
             <div className="mt-4 grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
               <button
-                onClick={connectMetaMask}
+                onClick={openWalletPicker}
                 disabled={connectingWallet}
                 className={`rounded-[24px] border p-4 text-left transition hover:-translate-y-0.5 ${chain.type === "evm" ? "border-cyan-300/20 bg-[linear-gradient(135deg,rgba(34,211,238,0.18),rgba(59,130,246,0.10))]" : "border-white/8 bg-white/[0.03] opacity-70"}`}
               >
-                <div className="text-sm font-semibold text-white">{chain.type === "evm" ? (connectingWallet ? "Connecting wallet..." : "Connect browser wallet") : "Browser wallet unavailable"}</div>
+                <div className="text-sm font-semibold text-white">{chain.type === "evm" ? (connectingWallet ? "Connecting wallet..." : "Connect wallet") : "Browser wallet unavailable"}</div>
                 <div className="mt-1 text-xs text-slate-300">
-                  {chain.type === "evm" ? `Use the injected wallet for ${chain.name}.` : "Bitcoin uses manual address entry in this release."}
+                  {chain.type === "evm" ? "Choose a detected wallet. Nothing connects until you pick one." : "Bitcoin uses manual address entry in this release."}
                 </div>
               </button>
+
+              {showWalletPicker && walletOptions.length === 0 && (
+                <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                  <div className="text-sm font-semibold text-white">No wallet detected</div>
+                  <div className="mt-2 text-xs leading-6 text-slate-400">{NO_WALLET_MESSAGE}</div>
+                </div>
+              )}
+
+              {showWalletPicker && walletOptions.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-[24px] border border-cyan-300/20 bg-[rgba(8,20,40,0.9)] p-4"
+                >
+                  <div className="text-sm font-semibold text-white">Choose your wallet</div>
+                  <div className="mt-3 flex flex-col gap-2">
+                    {walletOptions.map((option) => (
+                      <button
+                        key={option.label}
+                        onClick={() => connectProvider(option.provider)}
+                        className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:border-cyan-300/25 hover:bg-cyan-400/10"
+                      >
+                        <span>{option.label}</span>
+                        <span className="text-xs text-cyan-200">Connect</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => setShowWalletPicker(false)} className="mt-3 text-xs text-slate-400 transition hover:text-white">
+                    Cancel
+                  </button>
+                </motion.div>
+              )}
 
               <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
                 <div className="text-sm font-semibold text-white">Manual address</div>
@@ -506,11 +565,25 @@ export default function WalletPage() {
                       <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Recipient</div>
                       <div className="mt-2 break-all text-sm leading-7 text-white">{latestPayout.recipientAddress}</div>
                     </div>
-                    <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                    <div className={`rounded-[24px] border p-4 ${latestPayout.status === "approval_required" ? "border-amber-300/20 bg-amber-400/10" : "border-white/8 bg-white/[0.03]"}`}>
                       <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Amount</div>
-                      <div className="mt-2 text-sm font-semibold text-white">{latestPayout.amount} {latestPayout.assetSymbol}</div>
+                      <div className={`mt-2 font-bold ${latestPayout.status === "approval_required" ? "text-2xl text-amber-100" : "text-sm font-semibold text-white"}`}>
+                        {latestPayout.amount} {latestPayout.assetSymbol}
+                      </div>
+                      {latestPayout.status === "approval_required" && (
+                        <div className="mt-2 flex items-center gap-2 text-[11px] text-amber-200/80">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" />
+                          Pending payout approval
+                        </div>
+                      )}
                     </div>
                   </div>
+
+                  {latestPayout.status === "rejected" && (
+                    <div className="rounded-[24px] border border-rose-300/20 bg-rose-400/10 p-4 text-sm leading-6 text-rose-100">
+                      Rejection reason: {latestPayout.error || "Rejected by an administrator."}
+                    </div>
+                  )}
 
                   <div className="flex flex-col gap-3 sm:flex-row">
                     {isAdmin && latestPayout.status === "approval_required" && (

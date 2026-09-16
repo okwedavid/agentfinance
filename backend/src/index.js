@@ -36,9 +36,11 @@ import runAgent from './agents/agentRunner.js';
 import {
   approvePayout,
   listPayouts,
+  listPayoutsForAdmin,
   payoutRuntimeSnapshot,
   preparePayoutPlan,
   refreshPayoutStatus,
+  rejectPayout,
   summariseTaskResult,
   normalizeNetwork,
   isValidAddressForNetwork,
@@ -764,6 +766,16 @@ app.get('/payouts/:id/status', authMiddleware, async (req, res) => {
   }
 });
 
+app.get('/payouts/admin/queue', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const queue = await listPayoutsForAdmin();
+    res.json(queue);
+  } catch (error) {
+    logger.error('admin payout queue error', error);
+    res.status(500).json({ error: 'Could not load the payout queue.' });
+  }
+});
+
 app.post('/payouts/:id/approve', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const payout = await approvePayout({
@@ -775,11 +787,24 @@ app.post('/payouts/:id/approve', authMiddleware, requireAdmin, async (req, res) 
     res.json(payout);
   } catch (error) {
     logger.error('approve payout error', error);
-    const message = error.message || 'Could not approve payout.';
-    if (/token|permission|authorized|forbidden/i.test(message)) {
-      return res.status(403).json({ error: message });
-    }
-    return res.status(400).json({ error: message });
+    const message = typeof error?._raw === 'string' ? `The transaction could not be broadcast: ${error.message}` : (error.message || 'Could not approve payout.');
+    const status = error.status || 400;
+    res.status(status).json({ error: message });
+  }
+});
+
+app.post('/payouts/:id/reject', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const payout = await rejectPayout({
+      payoutId: req.params.id,
+      userId: req.user.sub,
+      reason: req.body?.reason,
+    });
+    res.json(payout);
+  } catch (error) {
+    logger.error('reject payout error', error);
+    const status = error.status || 400;
+    res.status(status).json({ error: error.message || 'Could not reject payout.' });
   }
 });
 

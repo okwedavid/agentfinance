@@ -14,6 +14,8 @@ const NAV_LINKS = [
   { href: "/settings", label: "Settings", short: "Config", icon: "☰" },
 ];
 
+const ADMIN_LINK = { href: "/admin", label: "Admin", short: "Admin", icon: "⚑" };
+
 interface NavProps {
   wsStatus?: WsStatus;
 }
@@ -42,8 +44,10 @@ function isActive(pathname: string, href: string) {
 
 export function TopNav({ wsStatus = "connecting" }: NavProps) {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const [open, setOpen] = useState(false);
+
+  const links = useMemo(() => (isAdmin ? [...NAV_LINKS, ADMIN_LINK] : NAV_LINKS), [isAdmin]);
 
   const initials = useMemo(() => {
     const label = user?.displayName || user?.username || "AF";
@@ -69,7 +73,7 @@ export function TopNav({ wsStatus = "connecting" }: NavProps) {
         </Link>
 
         <nav className="ml-2 hidden items-center gap-1 lg:flex">
-          {NAV_LINKS.map((link) => {
+          {links.map((link) => {
             const active = isActive(pathname, link.href);
             return (
               <Link
@@ -126,7 +130,7 @@ export function TopNav({ wsStatus = "connecting" }: NavProps) {
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            {NAV_LINKS.map((link) => {
+            {links.map((link) => {
               const active = isActive(pathname, link.href);
               return (
                 <Link

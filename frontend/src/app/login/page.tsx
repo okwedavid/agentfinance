@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { isLoggedIn } from "@/lib/api";
+import { getOAuthProviders, isLoggedIn } from "@/lib/api";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
@@ -22,10 +22,14 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/auth/oauth/providers`, { credentials: 'include' })
-      .then((res) => res.json().catch(() => null))
-      .then((data) => {
-        if (Array.isArray(data?.providers)) setProviders(data.providers.filter((p: any) => p.configured));
+    getOAuthProviders()
+      .then((data: any[]) => {
+        const list: { id: string; displayName: string; configured: boolean }[] = Array.isArray(data)
+          ? data.filter((item) => item && typeof item.id === "string")
+          : [];
+        const order = ["google", "facebook", "x"];
+        list.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+        setProviders(list);
       })
       .catch(() => {});
   }, []);
@@ -122,19 +126,29 @@ export default function LoginPage() {
             <>
               <div className="mt-5 flex items-center gap-3 text-[11px] uppercase tracking-[0.2em] text-gray-600">
                 <span className="h-px flex-1 bg-white/[0.06]" />
-                <span>Social login</span>
+                <span>Do you already have an account?</span>
                 <span className="h-px flex-1 bg-white/[0.06]" />
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">
-                {providers.map((p) => (
-                  <a
-                    key={p.id}
-                    href={`${process.env.NEXT_PUBLIC_API_URL || ''}/auth/oauth/${p.id}/start`}
-                    className="rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-sm text-gray-300 transition hover:bg-white/[0.06] text-center"
-                  >
-                    {p.displayName}
-                  </a>
-                ))}
+                {providers.map((p) =>
+                  p.configured ? (
+                    <a
+                      key={p.id}
+                      href={`${process.env.NEXT_PUBLIC_API_URL || ''}/auth/oauth/${p.id}/start`}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-sm text-gray-300 transition hover:bg-white/[0.06] text-center"
+                    >
+                      Continue with {p.displayName}
+                    </a>
+                  ) : (
+                    <div
+                      key={p.id}
+                      title={`${p.displayName} login is not configured on the server yet.`}
+                      className="cursor-not-allowed rounded-xl border border-white/5 bg-white/[0.01] py-2.5 text-sm text-gray-600 text-center opacity-60"
+                    >
+                      {p.displayName} <span className="text-[10px] text-gray-700">unavailable</span>
+                    </div>
+                  ),
+                )}
               </div>
             </>
           )}

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Wallet, JsonRpcProvider, parseEther, formatEther } from 'ethers';
 import prisma from '../prismaClient.js';
+import logger from '../utils/logger.js';
 import { validatePayoutAmount } from '../utils/security.js';
 
 const NETWORKS = {
@@ -207,6 +208,8 @@ function buildPayoutSummary({ payout, signer, network }) {
     lines.push(`Status: broadcasted. Transaction hash: ${payout.txHash}.`);
   } else if (payout.status === 'confirmed') {
     lines.push(`Status: confirmed. Transaction hash: ${payout.txHash}.`);
+  } else if (payout.status === 'rejected') {
+    lines.push(`Status: rejected. ${cleanText(payout.error || 'Rejected by an administrator.')}`);
   }
 
   return lines.map(cleanText).join('\n');
@@ -294,55 +297,154 @@ export async function preparePayoutPlan({
   });
 }
 
+export function buildEvmPayoutTransaction({ network, recipientAddress, amount }) {
+  if (network?.kind !== 'evm') {
+    throw Object.assign(new Error('This network does not support EVM native transfers.'), { status: 400 });
+  }
+
+  if (!isValidAddressForNetwork(recipientAddress, network)) {
+    throw Object.assign(new Error('Invalid recipient address.'), { status: 400 });
+  }
+
+  const numericAmount = parseFloat(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    throw Object.assign(new Error('Invalid payout amount.'), { status: 400 });
+  }
+
+  const value = parseEther(String(amount));
+  return {
+    to: recipientAddress,
+    value,
+    data: '0x',
+    chainId: network.chainId,
+  };
+}
+
+const SANITIZE_ERROR_MAP = [
+  [/missing revert data/i, 'The on-chain call returned no data. The destination may not accept native transfers.'],
+  [/CALL_EXCEPTION/i, 'The transaction could not be executed on-chain. Verify the network configuration and try again.'],
+  [/insufficient funds|insufficient balance/i, 'Insufficient funds in the treasury wallet.'],
+  [/NONCE/i, 'Transaction nonce conflict. Please try again shortly.'],
+  [/NETWORK_REQUEST_FAILED|timeout|TIMEOUT/i, 'Network request to the blockchain node failed. Please try again.'],
+  [/reverted/i, 'The transaction was reverted on-chain.'],
+];
+
+export function sanitizeBlockchainError(err) {
+  const raw = String(err?.message || err || 'Unknown error');
+  for (const [pattern, safeMsg] of SANITIZE_ERROR_MAP) {
+    if (pattern.test(raw)) return safeMsg;
+  }
+  return 'The blockchain transaction could not be completed. Please try again or contact support.';
+}
+
 async function broadcastEvmPayout(payout) {
   const network = normalizeNetwork(payout.network);
   const rpcUrl = getEvmRpcUrl(network.id);
   if (!rpcUrl) {
-    throw new Error(`No RPC endpoint is configured for ${network.label}.`);
+    throw Object.assign(
+      new Error(`No RPC endpoint is configured for ${network.label}.`),
+      { status: 500, _raw: `Missing RPC for ${network.id}` },
+    );
   }
 
   const rawKey = process.env.TREASURY_PRIVATE_KEY || process.env.EVM_TREASURY_PRIVATE_KEY;
   if (!isValidEvmPrivateKey(rawKey)) {
-    throw new Error('The configured treasury key is not a valid EVM private key.');
+    throw Object.assign(
+      new Error('Treasury signer is not configured correctly.'),
+      { status: 500, _raw: 'Invalid EVM private key format' },
+    );
   }
 
   const provider = new JsonRpcProvider(rpcUrl, network.chainId);
   const signer = new Wallet(normalizePrivateKey(rawKey), provider);
-  const tx = await signer.sendTransaction({
-    to: payout.recipientAddress,
-    value: parseEther(String(payout.amount)),
+
+  const txRequest = buildEvmPayoutTransaction({
+    network,
+    recipientAddress: payout.recipientAddress,
+    amount: payout.amount,
   });
 
-  return {
-    treasuryAddress: signer.address,
-    txHash: tx.hash,
-    signedPayload: {
-      hash: tx.hash,
-      nonce: tx.nonce,
-      from: tx.from,
-      to: tx.to,
-      value: tx.value?.toString?.() || null,
-      chainId: tx.chainId,
-    },
-  };
+  try {
+    const tx = await signer.sendTransaction({
+      to: txRequest.to,
+      value: txRequest.value,
+      data: txRequest.data,
+    });
+
+    return {
+      treasuryAddress: signer.address,
+      txHash: tx.hash,
+      signedPayload: {
+        hash: tx.hash,
+        nonce: tx.nonce,
+        from: tx.from,
+        to: tx.to,
+        value: tx.value?.toString?.() || null,
+        chainId: tx.chainId,
+      },
+    };
+  } catch (err) {
+    logger.error(`broadcastEvmPayout failed for payout ${payout.id}: ${err.message}`, { payoutId: payout.id, network: network.id, recipient: payout.recipientAddress });
+    const safeMsg = sanitizeBlockchainError(err);
+    throw Object.assign(new Error(safeMsg), { status: 502, _raw: err.message });
+  }
+}
+
+export const PAYOUT_STATUS = {
+  PENDING_APPROVAL: 'pending_approval',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+  PROCESSING: 'processing',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+};
+
+export function mapPayoutStatus(status) {
+  const raw = String(status || '').toLowerCase();
+  switch (raw) {
+    case 'approval_required':
+      return { key: PAYOUT_STATUS.PENDING_APPROVAL, label: 'Pending approval' };
+    case 'approved':
+      return { key: PAYOUT_STATUS.APPROVED, label: 'Approved' };
+    case 'rejected':
+      return { key: PAYOUT_STATUS.REJECTED, label: 'Rejected' };
+    case 'broadcasted':
+      return { key: PAYOUT_STATUS.PROCESSING, label: 'Processing' };
+    case 'confirmed':
+      return { key: PAYOUT_STATUS.COMPLETED, label: 'Completed' };
+    case 'failed':
+      return { key: PAYOUT_STATUS.FAILED, label: 'Failed' };
+    case 'blocked':
+      return { key: 'blocked', label: 'Blocked' };
+    default:
+      return { key: raw || 'unknown', label: raw ? raw.replace(/_/g, ' ') : 'Unknown' };
+  }
 }
 
 export async function approvePayout({ payoutId, userId, approvalToken, actorRole }) {
   if (!approvalToken || typeof approvalToken !== 'string') {
-    throw new Error('A valid approval token is required to approve this payout.');
+    throw Object.assign(new Error('A valid approval token is required to approve this payout.'), { status: 403 });
   }
 
   const payout = await prisma.payout.findUnique({ where: { id: payoutId } });
   if (!payout) throw new Error('Payout not found.');
 
+  // An actor may never approve a payout they requested themselves.
+  if (payout.userId === userId) {
+    throw Object.assign(new Error('You cannot approve your own withdrawal request.'), { status: 403 });
+  }
+
   // The unsigned token is the gate that proves approval was prepared for this
   // specific payout. Never accept an arbitrary/unverified token.
   if (!payout.approvalToken || approvalToken !== payout.approvalToken) {
-    throw new Error('Invalid approval token.');
+    throw Object.assign(new Error('Invalid approval token.'), { status: 403 });
   }
 
   // Do not re-broadcast an already broadcast/confirmed payout.
   if (payout.status === 'broadcasted' || payout.status === 'confirmed') return payout;
+  if (payout.status === 'rejected') {
+    throw Object.assign(new Error('This payout was already rejected and cannot be approved.'), { status: 409 });
+  }
 
   // Re-check the stored amount against the hard cap at approval time.
   const checked = validatePayoutAmount(payout.amount);
@@ -404,6 +506,46 @@ export async function approvePayout({ payoutId, userId, approvalToken, actorRole
   });
 }
 
+export async function rejectPayout({ payoutId, userId, reason }) {
+  const payout = await prisma.payout.findUnique({ where: { id: payoutId } });
+  if (!payout) throw new Error('Payout not found.');
+
+  if (payout.userId === userId) {
+    throw Object.assign(new Error('You cannot reject your own withdrawal request.'), { status: 403 });
+  }
+
+  if (payout.status === 'broadcasted' || payout.status === 'confirmed') {
+    throw Object.assign(new Error('This payout was already processed and cannot be rejected.'), { status: 409 });
+  }
+
+  const cleanedReason = cleanText(reason || 'Rejected by an administrator.').slice(0, 500);
+  return prisma.payout.update({
+    where: { id: payout.id },
+    data: {
+      status: 'rejected',
+      rejectedAt: new Date(),
+      error: cleanedReason || 'Rejected by an administrator.',
+    },
+  });
+}
+
+export async function listPayoutsForAdmin() {
+  const rows = await prisma.payout.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+    include: {
+      user: {
+        select: { id: true, username: true, email: true, displayName: true },
+      },
+    },
+  });
+
+  return rows.map((payout) => ({
+    ...payout,
+    statusMeta: mapPayoutStatus(payout.status),
+  }));
+}
+
 export async function refreshPayoutStatus({ payoutId, userId }) {
   const payout = await prisma.payout.findFirst({
     where: { id: payoutId, userId },
@@ -441,11 +583,16 @@ export async function refreshPayoutStatus({ payoutId, userId }) {
 }
 
 export async function listPayouts(userId) {
-  return prisma.payout.findMany({
+  const rows = await prisma.payout.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take: 30,
   });
+
+  return rows.map((payout) => ({
+    ...payout,
+    statusMeta: mapPayoutStatus(payout.status),
+  }));
 }
 
 export function summariseTaskResult(value) {

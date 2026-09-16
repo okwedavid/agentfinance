@@ -207,6 +207,29 @@ export async function refreshPayoutStatus(payoutId: string) {
   return apiFetch(`/payouts/${payoutId}/status`);
 }
 
+export async function getAdminPayoutQueue() {
+  const data = await apiFetch('/payouts/admin/queue');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function rejectPayout(payoutId: string, reason?: string) {
+  return apiFetch(`/payouts/${payoutId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function getOAuthProviders() {
+  try {
+    const data = await apiFetch('/auth/oauth/providers');
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.providers)) return data.providers;
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 export async function getAnalyticsHistory(limit = 20, offset = 0) {
   try {
     const data = await apiFetch(`/analytics/history?limit=${limit}&offset=${offset}`);
