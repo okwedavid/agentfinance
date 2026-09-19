@@ -17,12 +17,18 @@ import sessionsFactory from './routes/sessions.js';
 import replayRouter from './routes/replay.js';
 import walletRouter from './routes/wallet.js';
 import { authMiddleware, requireAdmin } from './middleware/auth.js';
-import { defaultRole, serializeUser, validateEmail, validatePassword, validateUsername } from './utils/security.js';
+import { defaultRole, serializeUser, validateEmail, validatePassword, validateUsername, normalizeEmailAddress } from './utils/security.js';
+import { issueEmailVerification, sendVerificationEmail, verifyEmailByToken, getEmailProviderStatus } from './services/emailService.js';
 import oauthRouter from './routes/oauth.js';
 import rateLimit from './middleware/rateLimit.js';
 import errorHandler from './middleware/errorHandler.js';
 import logger from './utils/logger.js';
-import runAgent from './agents/agentRunner.js';
+import { classifyAgent } from './agents/taskClassifier.js';
+import { executeTask } from './services/agentService.js';
+import { computeUserEarnings } from './services/earningsService.js';
+import { getGlobalTaskTimeoutMs, getTaskRetryPolicy } from './services/taskLifecycle.js';
+import { providerDiagnostics, configuredProviderSummary } from './providers/providerConfig.js';
+import { assertOAuthConfiguration } from './services/oauthService.js';
 import {
   approvePayout,
   listPayouts,
@@ -42,23 +48,33 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
+// OAuth startup validation: if a provider is enabled but its redirect URI is
+// unresolvable, fail clearly instead of shipping a broken callback. In
+// production this blocks boot; in development it logs a clear warning.
+const oauthValid = assertOAuthConfiguration();
+if (!oauthValid && process.env.NODE_ENV === 'production') {
+  logger.error('FATAL: OAuth configuration is invalid. Fix the redirect URI configuration and redeploy.');
+  process.exit(1);
+}
+
 const prismaSchemaPath = fileURLToPath(new URL('../prisma/schema.prisma', import.meta.url));
 const prismaBinPath = fileURLToPath(new URL('../node_modules/.bin/prisma', import.meta.url));
 
 function syncDatabaseSchema() {
-  logger.info('Syncing database schema (prisma db push)...');
+  logger.info('Applying database migrations (prisma migrate deploy)...');
   try {
-    execSync(`"${prismaBinPath}" db push --schema="${prismaSchemaPath}" --accept-data-loss`, {
+    execSync(`"${prismaBinPath}" migrate deploy --schema="${prismaSchemaPath}"`, {
       stdio: 'inherit',
     });
   } catch (error) {
-    logger.error('prisma db push failed', error);
+    logger.error('prisma migrate deploy failed', error);
     process.exit(1);
   }
 }
 
-// Ensure the schema is applied before serving traffic, independent of how the
-// process is started (helper/start script overrides may bypass npm scripts).
+// Ensure migrations are applied before serving traffic. Uses the non-destructive
+// `prisma migrate deploy`: it applies only pending migration files and never
+// runs sequence-requiring / data-loss commands like `db push --accept-data-loss`.
 syncDatabaseSchema();
 
 const app = express();
@@ -145,15 +161,6 @@ async function publish(channel, payload) {
   await redis.publish(channel, JSON.stringify(payload));
 }
 
-function classifyAgent(action = '') {
-  const text = action.toLowerCase();
-  if (/(trade|arbitrage|swap|buy|sell)/.test(text)) return 'trading';
-  if (/(write|newsletter|article|thread|content|youtube|tweet)/.test(text)) return 'content';
-  if (/(send|transfer|route|sweep|wallet|balance|gas)/.test(text)) return 'execution';
-  if (/(research|find|analyse|analyze|best|top|yield|market)/.test(text)) return 'research';
-  return 'coordinator';
-}
-
 function sanitizeTask(task) {
   const parsedResult = parseTaskResult(task.result);
   const summary = summariseTaskResult(parsedResult);
@@ -165,54 +172,15 @@ function sanitizeTask(task) {
 }
 
 async function runTaskInline(task) {
-  await prisma.task.update({
-    where: { id: task.id },
-    data: { status: 'running', startedAt: new Date() },
+  const agentType = classifyAgent(task.action);
+  const { outcome } = await executeTask({
+    taskId: task.id,
+    action: task.action,
+    userId: task.userId,
+    agentType,
+    redis,
   });
-  await publish('agentfi:tasks', {
-    type: 'task:running',
-    data: { id: task.id, status: 'running', agentType: classifyAgent(task.action) },
-  });
-
-  const user = task.userId
-    ? await prisma.user.findUnique({ where: { id: task.userId } }).catch(() => null)
-    : null;
-  const profiles = user?.walletProfiles && typeof user.walletProfiles === 'object' ? user.walletProfiles : {};
-  const activeWallet = profiles?.[user?.preferredNetwork || 'ethereum'] || user?.walletAddress || null;
-
-  try {
-    const result = await runAgent({
-      action: task.action,
-      agentType: classifyAgent(task.action),
-      walletAddress: activeWallet,
-    });
-
-    const updated = await prisma.task.update({
-      where: { id: task.id },
-      data: {
-        status: 'completed',
-        completedAt: new Date(),
-        result: JSON.stringify({
-          output: result.output,
-          summary: summariseTaskResult(result.output).slice(0, 1200) || '',
-          provider: result.provider,
-          agentType: result.agentType,
-        }),
-      },
-    });
-
-    await publish('agentfi:tasks', { type: 'task:completed', data: sanitizeTask(updated) });
-  } catch (error) {
-    const updated = await prisma.task.update({
-      where: { id: task.id },
-      data: {
-        status: 'failed',
-        completedAt: new Date(),
-        result: JSON.stringify({ error: error.message }),
-      },
-    });
-    await publish('agentfi:tasks', { type: 'task:failed', data: sanitizeTask(updated) });
-  }
+  logger.info(`inline-task done id=${task.id} outcome=${outcome}`);
 }
 
 app.get('/health', async (req, res) => {
@@ -264,24 +232,45 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
 
   const user = await prisma.user.findUnique({ where: { id: req.user.sub } }).catch(() => null);
   const payoutRuntime = payoutRuntimeSnapshot();
+  const earnings = await computeUserEarnings(req.user.sub).catch(() => ({
+    completedCount: 0,
+    perTaskEth: 0,
+    totalEth: 0,
+    incomeEligible: false,
+  }));
 
   res.json({
     providers: providerFlags,
     providerCount: Object.values(providerFlags).filter(Boolean).length,
+    providerModels: configuredProviderSummary(),
+    requestedProvider: process.env.LLM_PROVIDER || 'auto',
     redis: !!redis,
     queueEnabled: !!taskQueue,
     fleet,
     walletAddress: user?.walletAddress || null,
     walletProfiles: user?.walletProfiles || {},
     preferredNetwork: user?.preferredNetwork || 'ethereum',
+    earnings,
     payoutRuntime,
+  });
+});
+
+// Safe provider diagnostics (never exposes keys or headers).
+app.get('/system/diagnostics', authMiddleware, async (req, res) => {
+  res.json({
+    providers: providerDiagnostics(),
+    requestedProvider: process.env.LLM_PROVIDER || 'auto',
+    globalTaskTimeoutMs: getGlobalTaskTimeoutMs(),
+    retryPolicy: getTaskRetryPolicy(),
   });
 });
 
 app.post('/auth/register', async (req, res) => {
   try {
     const { username, password } = req.body;
-    const email = typeof req.body.email === 'string' && req.body.email.trim() ? req.body.email.trim().toLowerCase() : null;
+    const email = typeof req.body.email === 'string' && req.body.email.trim()
+      ? normalizeEmailAddress(req.body.email)
+      : null;
 
     const usernameError = validateUsername(username);
     if (usernameError) return res.status(400).json({ error: usernameError });
@@ -292,22 +281,30 @@ app.post('/auth/register', async (req, res) => {
     const passwordError = validatePassword(password);
     if (passwordError) return res.status(400).json({ error: passwordError });
 
-    const existingUsername = await prisma.user.findUnique({ where: { username } });
+    const existingUsername = await prisma.user.findUnique({ where: { username: username.trim() } });
     if (existingUsername) return res.status(400).json({ error: 'Username is already taken.' });
 
     if (email) {
       const existingEmail = await prisma.user.findUnique({ where: { email } });
       if (existingEmail) return res.status(400).json({ error: 'Email is already registered.' });
     }
-const passwordHash = await bcrypt.hash(password, 10);
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const verification = email ? await issueEmailVerification(email) : null;
     const user = await prisma.user.create({
       data: {
         username: username.trim(),
         email,
+        emailVerified: false,
+        emailVerificationToken: verification?.token || null,
+        emailVerificationExpiresAt: verification?.expiresAt || null,
         passwordHash,
         role: defaultRole(),
       },
     });
+    if (verification?.token) {
+      void sendVerificationEmail({ email, token: verification.token, username: user.username });
+    }
     const token = signToken({ sub: user.id, username: user.username });
 
     res.cookie('token', token, authCookieOptions());
@@ -322,6 +319,22 @@ const passwordHash = await bcrypt.hash(password, 10);
     logger.error('register error', error);
     res.status(500).json({ error: 'registration failed' });
   }
+});
+
+app.post('/auth/verify', async (req, res) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const result = await verifyEmailByToken(token);
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ ok: true, email: result.email });
+  } catch (error) {
+    logger.error('email verify error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.get('/auth/email/provider', authMiddleware, async (req, res) => {
+  res.json(getEmailProviderStatus());
 });
 
 app.post('/auth/login', async (req, res) => {
@@ -355,6 +368,35 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     res.json(serializeUser(user));
   } catch {
     res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.delete('/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.sub;
+
+    const deleted = await prisma.$transaction([
+      prisma.message.deleteMany({ where: { task: { userId } } }),
+      prisma.task.deleteMany({ where: { userId } }),
+      prisma.payout.deleteMany({ where: { userId } }),
+      prisma.digitalProduct.deleteMany({ where: { userId } }),
+      prisma.factoryRun.deleteMany({ where: { userId } }),
+      prisma.user.delete({ where: { id: userId } }),
+    ]);
+
+    res.clearCookie('token', authCookieOptions());
+    res.json({
+      ok: true,
+      redirect: '/login',
+      message: 'Account deleted.',
+      deleted: { tasks: deleted[1]?.count ?? 0, user: 1 },
+    });
+  } catch (error) {
+    logger.error('account delete error', error);
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+    res.status(500).json({ error: 'Account deletion failed.' });
   }
 });
 
@@ -431,25 +473,29 @@ app.post('/tasks', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'action is required' });
     }
 
+    const agentType = classifyAgent(action);
     const task = await prisma.task.create({
       data: {
         id: uuidv4(),
         action,
-        status: 'pending',
+        status: 'queued',
         userId: req.user.sub,
         agentId: agentId || null,
       },
     });
 
-    await publish('agentfi:tasks', { type: 'task:created', data: sanitizeTask(task) });
+    await publish('agentfi:tasks', {
+      type: 'task:created',
+      data: { id: task.id, status: 'queued', agentType },
+      correlationId: task.id,
+    });
 
     if (taskQueue) {
       await taskQueue.add(
         'processTask',
-        { taskId: task.id, action, userId: req.user.sub, agentId: agentId || null },
+        { taskId: task.id, action, userId: req.user.sub, agentId: agentId || null, agentType },
         {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 2000 },
+          attempts: 1,
           removeOnComplete: { count: 100 },
           removeOnFail: { count: 50 },
         },
@@ -493,16 +539,32 @@ app.get('/tasks/:id', authMiddleware, async (req, res) => {
 
 app.patch('/tasks/:id', authMiddleware, async (req, res) => {
   try {
-    const fields = {};
-    const { status, result, archived } = req.body;
-    if (status) fields.status = status;
-    if (result !== undefined) fields.result = typeof result === 'string' ? result : JSON.stringify(result);
-    if (typeof archived === 'boolean') fields.archived = archived;
-
     const existing = await prisma.task.findFirst({
       where: { id: req.params.id, userId: req.user.sub },
     });
     if (!existing) return res.status(404).json({ error: 'not found' });
+
+    const fields = {};
+    const { status, archived, action: nextAction } = req.body;
+
+    // Status changes are strictly governed by the lifecycle rules. The client
+    // can NEVER set 'completed' or hand-write a result — earnings are derived
+    // server-side from authoritative completed records only.
+    if (status) {
+      const allowed =
+        status === 'cancelled' && (existing.status === 'queued' || existing.status === 'running' || existing.status === 'retrying');
+      if (!allowed) {
+        return res.status(400).json({ error: 'That status change is not allowed.' });
+      }
+      fields.status = status;
+      if (status === 'cancelled') {
+        fields.completedAt = new Date();
+        fields.result = JSON.stringify({ error: 'Task cancelled.', category: 'user_cancelled' });
+      }
+    }
+
+    if (typeof archived === 'boolean') fields.archived = archived;
+    if (typeof nextAction === 'string' && nextAction.trim()) fields.action = nextAction.trim().slice(0, 1000);
 
     const task = await prisma.task.update({
       where: { id: req.params.id },
@@ -510,7 +572,51 @@ app.patch('/tasks/:id', authMiddleware, async (req, res) => {
     });
     await publish('agentfi:tasks', { type: 'task:updated', data: sanitizeTask(task) });
     res.json(sanitizeTask(task));
-  } catch {
+  } catch (error) {
+    logger.error('task patch error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+// Retry a failed / timed-out / cancelled task SAFELY: re-queues the SAME task
+// record (no duplicate row, no duplicate earnings) and re-runs it.
+app.post('/tasks/:id/retry', authMiddleware, async (req, res) => {
+  try {
+    const existing = await prisma.task.findFirst({
+      where: { id: req.params.id, userId: req.user.sub },
+    });
+    if (!existing) return res.status(404).json({ error: 'not found' });
+
+    if (!['failed', 'timed_out', 'cancelled'].includes(existing.status)) {
+      return res.status(400).json({ error: 'Only failed, timed out or cancelled tasks can be retried.' });
+    }
+
+    const task = await prisma.task.update({
+      where: { id: req.params.id },
+      data: {
+        status: 'queued',
+        startedAt: null,
+        completedAt: null,
+        duration: null,
+        result: null,
+      },
+    });
+
+    await publish('agentfi:tasks', { type: 'task:updated', data: sanitizeTask(task) });
+
+    if (taskQueue) {
+      await taskQueue.add(
+        'processTask',
+        { taskId: task.id, action: task.action, userId: req.user.sub, agentId: task.agentId, agentType: classifyAgent(task.action) },
+        { attempts: 1, removeOnComplete: { count: 100 }, removeOnFail: { count: 50 } },
+      );
+    } else {
+      void runTaskInline(task);
+    }
+
+    res.json(sanitizeTask(task));
+  } catch (error) {
+    logger.error('task retry error', error);
     res.status(500).json({ error: 'failed' });
   }
 });

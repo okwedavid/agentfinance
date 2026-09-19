@@ -31,15 +31,41 @@ export function validateUsername(username) {
   return null;
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+// Backend-authoritative email syntax check. Conservative on purpose: rejects
+// obviously malformed addresses without restricting legitimate providers.
+// Any custom domain with valid syntax is accepted (no Gmail/Yahoo lock-in).
+// No mailbox-existence probing is performed at signup.
+const EMAIL_RE = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
 export function validateEmail(email) {
   if (email === undefined || email === null) return null; // email is optional
-  if (typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
-    return 'Enter a valid email address.';
-  }
+  if (typeof email !== 'string') return 'Enter a valid email address.';
+  const value = email.trim();
+  if (!value) return 'Enter a valid email address.';
+  if (value.length > 254) return 'Enter a valid email address.';
+
+  const parts = value.split('@');
+  if (parts.length !== 2) return 'Enter a valid email address.';
+  const [local, domain] = parts;
+  if (!local || !domain) return 'Enter a valid email address.';
+  if (local.length > 64) return 'Enter a valid email address.';
+  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return 'Enter a valid email address.';
+  if (domain.startsWith('-') || domain.endsWith('-') || domain.includes('..')) return 'Enter a valid email address.';
+  if (!EMAIL_RE.test(value)) return 'Enter a valid email address.';
   return null;
 }
+
+/** Normalise an email for storage: trim whitespace + lowercase the domain and local part. */
+export function normalizeEmailAddress(email) {
+  if (typeof email !== 'string') return email;
+  return email.trim().toLowerCase();
+}
+
+export const EMAIL_STATUS = Object.freeze({
+  REGISTERED: 'registered',
+  VERIFICATION_REQUIRED: 'verification_required',
+  VERIFIED: 'verified',
+});
 
 export function validatePassword(password) {
   if (typeof password !== 'string' || password.length < 8) {
@@ -54,6 +80,7 @@ export function serializeUser(user, { isNewUser = false } = {}) {
     id: user.id,
     username: user.username,
     email: user.email || null,
+    emailVerified: user.emailVerified === true,
     displayName: user.displayName || null,
     bio: user.bio || null,
     walletAddress: user.walletAddress || null,

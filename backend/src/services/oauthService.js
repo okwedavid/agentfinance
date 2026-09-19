@@ -60,13 +60,31 @@ function obj(value) {
 }
 
 export function configuredProviders() {
-  return Object.values(PROVIDERS).map((provider) => ({
-    id: provider.id,
-    displayName: provider.displayName,
-    configured: isProviderConfigured(provider),
-  }));
+  return Object.values(PROVIDERS).map((provider) => {
+    let redirectUri = null;
+    try {
+      redirectUri = getRedirectUri(provider);
+    } catch {
+      redirectUri = null;
+    }
+    return {
+      id: provider.id,
+      displayName: provider.displayName,
+      configured: isProviderConfigured(provider),
+      redirectUri,
+    };
+  });
 }
 
+/**
+ * Resolve the redirect URI for a provider. Single authoritative resolution:
+ *  1. <PROVIDER>_REDIRECT_URI (e.g. GOOGLE_REDIRECT_URI)
+ *  2. OAUTH_REDIRECT_URI
+ *  3. Derived from PUBLIC_BACKEND_URL + the ACTUAL callback route
+ *     (/auth/oauth/<provider>/callback)
+ * The same value is used for the authorization request AND the token exchange,
+ * which is what Google requires (exact redirect_uri match).
+ */
 export function getRedirectUri(provider) {
   const explicit = obj(process.env[`${provider.id.toUpperCase()}_REDIRECT_URI`])
     || obj(process.env.OAUTH_REDIRECT_URI);
@@ -79,6 +97,38 @@ export function getRedirectUri(provider) {
     );
   }
   return `${backendUrl.replace(/\/+$/, '')}/auth/oauth/${provider.id}/callback`;
+}
+
+/**
+ * Startup validation. When a provider is ENABLED (client id + secret present)
+ * but its redirect URI cannot be resolved, fail loudly so a broken OAuth flow
+ * can never silently ship. Secrets are never logged.
+ */
+export function assertOAuthConfiguration() {
+  const failures = [];
+  for (const provider of Object.values(PROVIDERS)) {
+    if (!isProviderConfigured(provider)) continue;
+    try {
+      const redirectUri = getRedirectUri(provider);
+      loggerSafe(`OAuth ${provider.id}: enabled, callback=${redirectUri}`);
+    } catch {
+      failures.push(
+        `${provider.id} is enabled but ${provider.id.toUpperCase()}_REDIRECT_URI / OAUTH_REDIRECT_URI / PUBLIC_BACKEND_URL is missing. ` +
+        `Expected callback: https://<backend-origin>/auth/oauth/${provider.id}/callback`,
+      );
+    }
+  }
+  if (failures.length > 0) {
+    // eslint-disable-next-line no-console
+    console.error(`[OAuth] Invalid configuration:\n${failures.join('\n')}`);
+    return false;
+  }
+  return true;
+}
+
+function loggerSafe(message) {
+  // eslint-disable-next-line no-console
+  console.log(`[OAuth] ${message}`);
 }
 
 export function buildAuthorizationUrl(providerId, state) {

@@ -17,6 +17,7 @@ import {
   saveWalletAddress,
 } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import WalletPickerModal from "@/components/WalletPickerModal";
 
 const CHAINS = [
   { id: "ethereum", name: "Ethereum", symbol: "ETH", type: "evm", explorer: "https://etherscan.io/address/" },
@@ -79,6 +80,7 @@ export default function WalletPage() {
   const [payouts, setPayouts] = useState<any[]>([]);
   const [routingBusy, setRoutingBusy] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const chain = useMemo(
     () => CHAINS.find((item) => item.id === chainId) || CHAINS[0],
@@ -169,26 +171,9 @@ export default function WalletPage() {
       flash("Use a Bitcoin address manually for the Bitcoin network.");
       return;
     }
-
-    const provider = (window as any).ethereum;
-    if (!provider) {
-      flash("MetaMask is not installed on this device.");
-      return;
-    }
-
-    try {
-      if (chain.id === "bsc") {
-        await provider.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x38" }],
-        }).catch(() => null);
-      }
-
-      const accounts = await provider.request({ method: "eth_requestAccounts" });
-      if (accounts?.[0]) await connect(accounts[0]);
-    } catch (error: any) {
-      flash(error.message || "Wallet connection was cancelled.");
-    }
+    // Explicit wallet selection: the picker lists every EIP-6963 wallet the
+    // user has installed and only then requests an account (a user gesture).
+    setPickerOpen(true);
   }
 
   async function disconnectWallet() {
@@ -259,9 +244,14 @@ export default function WalletPage() {
   const pendingEarnings = chain.type === "btc"
     ? (completedTasks * 0.00001).toFixed(8)
     : (completedTasks * 0.001).toFixed(6);
-  const lifetimeEarnings = chain.type === "btc"
-    ? (completedTasks * 0.000035).toFixed(8)
-    : (completedTasks * 0.0035).toFixed(6);
+  // Server-authoritative lifetime earnings from the backend ledger.
+  const serverTotal = runtime?.earnings?.totalEth;
+  const lifetimeEarnings =
+    typeof serverTotal === "number" && Number.isFinite(serverTotal)
+      ? serverTotal.toFixed(6)
+      : chain.type === "btc"
+        ? (completedTasks * 0.000035).toFixed(8)
+        : (completedTasks * 0.0035).toFixed(6);
 
   const walletStatus = !wallet
     ? "No wallet connected"
@@ -372,7 +362,7 @@ export default function WalletPage() {
               >
                 <div className="text-sm font-semibold text-white">{chain.type === "evm" ? "Connect browser wallet" : "Browser wallet unavailable"}</div>
                 <div className="mt-1 text-xs text-slate-300">
-                  {chain.type === "evm" ? `Use the injected wallet for ${chain.name}.` : "Bitcoin uses manual address entry in this release."}
+                  {chain.type === "evm" ? "Choose which installed wallet to connect — no auto-detection." : "Bitcoin uses manual address entry in this release."}
                 </div>
               </button>
 
@@ -527,6 +517,7 @@ export default function WalletPage() {
 
       <PageFooter />
       <BottomNav />
+      <WalletPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} />
     </div>
   );
 }

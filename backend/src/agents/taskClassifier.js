@@ -160,3 +160,13 @@ export function getAgentConfig(type) {
 }
 
 export { AGENT_CONFIGS };
+
+/** Lightweight agent-type classifier used across worker + runner. */
+export function classifyAgent(action = '') {
+  const text = String(action).toLowerCase();
+  if (/(trade|arbitrage|swap|buy|sell|yield|apy|liquidity|stake)/.test(text)) return 'trading';
+  if (/(write|newsletter|article|thread|content|youtube|tweet)/.test(text)) return 'content';
+  if (/(send|transfer|route|sweep|wallet|balance|gas)/.test(text)) return 'execution';
+  if (/(research|find|analyse|analyze|best|top|yield|market|investigat)/.test(text)) return 'research';
+  return 'coordinator';
+}

@@ -112,6 +112,14 @@ export async function patchTask(id: string, patch: Record<string, unknown>) {
   });
 }
 
+/**
+ * Safe retry: re-queues the SAME task record so the retry can never create a
+ * duplicate row or duplicate earnings.
+ */
+export async function retryTask(id: string) {
+  return apiFetch(`/tasks/${id}/retry`, { method: 'POST' });
+}
+
 export async function deleteTask(id: string) {
   return apiFetch(`/tasks/${id}`, { method: 'DELETE' });
 }
@@ -144,6 +152,14 @@ export async function updateProfile(profile: {
     method: 'PATCH',
     body: JSON.stringify(profile),
   });
+}
+
+/**
+ * Permanently deletes the signed-in account (tasks, payouts and profile).
+ * Returns { redirect } pointing at `/login`.
+ */
+export async function deleteAccount() {
+  return apiFetch('/auth/me', { method: 'DELETE' });
 }
 
 export async function preparePayout(input: {

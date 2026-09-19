@@ -14,6 +14,7 @@ interface User {
   username: string;
   displayName?: string;
   email?: string;
+  emailVerified?: boolean;
   role?: string;
   bio?: string;
   walletAddress?: string | null;
@@ -53,6 +54,7 @@ function normalizeUser(payload: any): User | null {
     id: payload.id,
     username: payload.username,
     email: payload.email || null,
+    emailVerified: payload.emailVerified === true,
     role: payload.role || "USER",
     displayName: payload.displayName || null,
     bio: payload.bio || null,

@@ -9,7 +9,12 @@ import Link from "next/link";
 export default function LoginPage() {
   const { login, register } = useAuth();
   const router = useRouter();
-  const [mode, setMode]       = useState<'login' | 'register'>('login');
+  const [mode, setMode]       = useState<'login' | 'register'>(() => {
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'register') {
+      return 'register';
+    }
+    return 'login';
+  });
   const [username, setUser]   = useState('');
   const [email, setEmail]     = useState('');
   const [password, setPass]   = useState('');

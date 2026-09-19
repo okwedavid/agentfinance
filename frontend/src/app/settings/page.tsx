@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { BottomNav, PageFooter, TopNav } from "@/components/layout/Nav";
+import { deleteAccount, logout } from "@/lib/api";
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (value: boolean) => void }) {
   return (
@@ -105,6 +106,25 @@ export default function SettingsPage() {
       // Keep the UI responsive even if the backend is down.
     }
     setMessage("Wallet disconnected.");
+  }
+
+  async function deleteMyAccount() {
+    if (
+      !confirm(
+        "Delete your account permanently? All tasks, payouts and profile data will be removed. This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteAccount();
+    } catch (error: any) {
+      setMessage(error?.message || "Could not delete the account from the backend.");
+      return;
+    }
+    // Local state cleanup, then land on the unified login shell.
+    logout();
+    window.location.href = "/login";
   }
 
   const providerSummary = useMemo(() => {
@@ -272,6 +292,20 @@ export default function SettingsPage() {
               </p>
               <button onClick={disconnectWallet} className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100 transition hover:bg-amber-300/15">
                 Disconnect wallet
+              </button>
+            </div>
+
+            <div className="glass rounded-[28px] border border-rose-400/25 p-5">
+              <h2 className="text-lg font-semibold text-white">Delete account</h2>
+              <p className="mt-2 text-sm leading-7 text-slate-400">
+                Permanently removes your account, tasks, payouts and profile. After deletion you are redirected to
+                the unified login page. This cannot be undone.
+              </p>
+              <button
+                onClick={deleteMyAccount}
+                className="mt-4 rounded-2xl bg-rose-600/90 px-4 py-3 text-sm font-semibold text-white transition hover:bg-rose-600"
+              >
+                Delete my account
               </button>
             </div>
           </section>

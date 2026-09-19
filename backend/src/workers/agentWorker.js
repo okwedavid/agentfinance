@@ -1,105 +1,60 @@
 /**
- * agentWorker.js
- * BullMQ worker that processes tasks using the multi-provider agentRunner.
+ * agentWorker.js — BullMQ worker for the resilient task lifecycle.
  *
- * Add to backend/src/index.js:
- *   import './workers/agentWorker.js';
+ * Delegates all execution to agentService.executeTask so the inline and
+ * queued paths behave identically (same retries, timeout, terminal states).
+ * A task that is already terminal is never re-executed, preventing duplicate
+ * completion events and duplicate earnings.
  */
 import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
+import { executeTask, TASK_STATUS } from '../services/agentService.js';
+import { isTerminalStatus } from '../services/taskLifecycle.js';
+import { classifyAgent } from '../agents/taskClassifier.js';
 import prisma from '../prismaClient.js';
-import runAgent from '../agents/agentRunner.js';
-import { summariseTaskResult } from '../services/payoutService.js';
+import logger from '../utils/logger.js';
 
 const REDIS_URL = process.env.REDIS_URL;
 
 if (!REDIS_URL || REDIS_URL.includes('{{')) {
-  console.warn('[Worker] REDIS_URL not configured — agent worker disabled. Fix: set REDIS_URL in the backend environment');
+  logger.warn('[Worker] REDIS_URL not configured - agent worker disabled. Set REDIS_URL in the backend environment');
 } else {
   const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 
   const worker = new Worker('agent-tasks', async (job) => {
-    const { taskId, action, agentId, userId } = job.data;
-    console.log(`[Worker] Processing task ${taskId}: ${action?.slice(0, 60)}`);
+    const { taskId, action, userId } = job.data;
+    logger.info(`work-start id=${taskId} job=${job.id}`);
 
-    // Mark as running
-    await prisma.task.update({
-      where: { id: taskId },
-      data: { status: 'running', startedAt: new Date() },
-    }).catch(e => console.error('[Worker] DB update running:', e.message));
-
-    // Publish WS event
-    const publish = (type, extra = {}) =>
-      connection.publish('agentfi:tasks', JSON.stringify({ type, taskId, action, ...extra }));
-    await publish('task:running');
-
-    // Classify agent type from action text
-    function classifyAgent(text) {
-      const t = text.toLowerCase();
-      if (t.includes('trade') || t.includes('arbitrage') || t.includes('swap') || t.includes('buy') || t.includes('sell')) return 'trading';
-      if (t.includes('write') || t.includes('newsletter') || t.includes('article') || t.includes('thread') || t.includes('content')) return 'content';
-      if (t.includes('send') || t.includes('transfer') || t.includes('route') || t.includes('sweep') || t.includes('wallet')) return 'execution';
-      if (t.includes('research') || t.includes('find') || t.includes('analyse') || t.includes('best') || t.includes('top') || t.includes('yield')) return 'research';
-      return 'coordinator';
+    const existing = await prisma.task.findUnique({ where: { id: taskId } }).catch(() => null);
+    if (!existing) {
+      logger.warn(`work-skip id=${taskId} reason=not-found`);
+      return;
+    }
+    if (isTerminalStatus(existing.status)) {
+      logger.warn(`work-skip id=${taskId} reason=terminal status=${existing.status}`);
+      return;
     }
 
     const agentType = classifyAgent(action || '');
+    const { outcome, incomeEligible } = await executeTask({ taskId, action, userId, agentType, redis: connection });
 
-    // Get user wallet from DB (for execution agent)
-    let walletAddress = null;
-    try {
-      const task = await prisma.task.findUnique({ where: { id: taskId } });
-      const ownerId = task?.userId || userId;
-      if (ownerId) {
-        const user = await prisma.user.findUnique({ where: { id: ownerId } });
-        const profiles = user?.walletProfiles && typeof user.walletProfiles === 'object' ? user.walletProfiles : {};
-        walletAddress = profiles?.[user?.preferredNetwork || 'ethereum'] || user?.walletAddress || null;
-      }
-    } catch {}
-
-    try {
-      const result = await runAgent({ action, agentType, walletAddress });
-
-      // Save result
-      await prisma.task.update({
-        where: { id: taskId },
-        data: {
-          status: 'completed',
-          completedAt: new Date(),
-          result: JSON.stringify({
-            output: result.output,
-            summary: summariseTaskResult(result.output).slice(0, 1200),
-            provider: result.provider,
-            agentType: result.agentType,
-          }),
-        },
-      });
-
-      await publish('task:completed', { provider: result.provider });
-      console.log(`[Worker] ✅ Task ${taskId} completed via ${result.provider}`);
-
-    } catch (err) {
-      console.error(`[Worker] ❌ Task ${taskId} failed:`, err.message);
-      await prisma.task.update({
-        where: { id: taskId },
-        data: {
-          status: 'failed',
-          completedAt: new Date(),
-          result: JSON.stringify({ error: err.message }),
-        },
-      }).catch(() => {});
-
-      await publish('task:failed', { error: err.message });
-      throw err; // BullMQ will retry based on job config
+    if (outcome === 'completed') {
+      logger.info(`work-done id=${taskId} outcome=completed incomeEligible=${incomeEligible}`);
+      return;
     }
+    // Failed / timed_out / already-terminal are handled inside executeTask.
+    logger.warn(`work-done id=${taskId} outcome=${outcome}`);
   }, {
     connection,
     concurrency: 3,
-    limiter: { max: 10, duration: 60_000 }, // 10 tasks/minute max
+    limiter: { max: 10, duration: 60_000 },
   });
 
-  worker.on('completed', job => console.log(`[Worker] Job ${job.id} completed`));
-  worker.on('failed', (job, err) => console.error(`[Worker] Job ${job?.id} failed:`, err.message));
+  worker.on('completed', (job) => logger.info(`job-completed id=${job.id}`));
+  worker.on('failed', (job, err) => logger.warn(`job-failed id=${job?.id} error=${err?.message}`));
 
-  console.log('[Worker] 🤖 Agent worker started, listening for tasks…');
+  logger.info('[Worker] Agent worker started.');
 }
+
+export { TASK_STATUS };
+export default null;

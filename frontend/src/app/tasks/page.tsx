@@ -5,12 +5,12 @@ import TaskCard from '../../components/TaskCard';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 function TasksListInner(){
-  const { tasks, loading, refresh } = useTasks();
+  const { tasks, loading, refresh, retry } = useTasks();
   return (
     <div>
       <div className="grid grid-cols-3 gap-4">
         {tasks.map(t=> (
-          <TaskCard key={t.id} task={t} onOpen={(id)=>{ window.location.href = `/tasks/${id}`; }} />
+          <TaskCard key={t.id} task={t} onOpen={(id)=>{ window.location.href = `/tasks/${id}`; }} onRetry={() => { void retry(t.id).then(async () => refresh()); }} />
         ))}
       </div>
     </div>
