@@ -50,6 +50,14 @@ export function validateUsername(username) {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+export function normalizeEmailAddress(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 320) return null;
+  return trimmed.toLowerCase();
+}
+
 export function validateEmail(email) {
   if (email === undefined || email === null) return null; // email is optional
   if (typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
@@ -71,6 +79,7 @@ export function serializeUser(user, { isNewUser = false } = {}) {
     id: user.id,
     username: user.username,
     email: user.email || null,
+    emailVerified: user.emailVerified === true,
     // The super admin always renders as "super-admin", never as the raw owner
     // username (okwedavid). Any other account shows its own chosen name.
     displayName: role === ROLE_SUPER_ADMIN ? 'super-admin' : (user.displayName || null),

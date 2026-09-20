@@ -18,11 +18,12 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import {
-  detectInjectedProviders,
+  collectWalletOptions,
   NO_WALLET_MESSAGE,
   requestWalletAccounts,
   switchWalletNetwork,
 } from "@/lib/walletProviders";
+import { MOBILE_WALLET_INSTALLS } from "@/lib/wallets/mobile";
 
 const CHAINS = [
   { id: "ethereum", name: "Ethereum", symbol: "ETH", type: "evm", explorer: "https://etherscan.io/address/" },
@@ -101,6 +102,7 @@ export default function WalletPage() {
   const [connectingWallet, setConnectingWallet] = useState(false);
   const [walletOptions, setWalletOptions] = useState<any[]>([]);
   const [showWalletPicker, setShowWalletPicker] = useState(false);
+  const [walletsLoading, setWalletsLoading] = useState(false);
 
   const chain = useMemo(
     () => CHAINS.find((item) => item.id === chainId) || CHAINS[0],
@@ -191,9 +193,14 @@ export default function WalletPage() {
       flash("Use a Bitcoin address manually for the Bitcoin network.");
       return;
     }
-    const options = detectInjectedProviders((window as any).ethereum);
-    setWalletOptions(options);
+    setWalletsLoading(true);
     setShowWalletPicker(true);
+    setWalletOptions([]);
+    // EIP-6963 discovery + legacy injected providers. Never auto-connects.
+    void collectWalletOptions()
+      .then(setWalletOptions)
+      .catch(() => setWalletOptions([]))
+      .finally(() => setWalletsLoading(false));
   }
 
   async function connectProvider(provider: any) {
@@ -293,9 +300,14 @@ export default function WalletPage() {
   const pendingEarnings = chain.type === "btc"
     ? (completedTasks * 0.00001).toFixed(8)
     : (completedTasks * 0.001).toFixed(6);
-  const lifetimeEarnings = chain.type === "btc"
-    ? (completedTasks * 0.000035).toFixed(8)
-    : (completedTasks * 0.0035).toFixed(6);
+  // Prefer the server-side earnings ledger (/system/runtime.earnings). The
+  // client-side estimate is only a fallback for non-EVM chains or stale data.
+  const serverTotalEth = Number.isFinite(runtime?.earnings?.totalEth) ? runtime.earnings.totalEth : null;
+  const lifetimeEarnings = serverTotalEth !== null && chain.type !== "btc"
+    ? serverTotalEth.toFixed(6)
+    : (chain.type === "btc"
+      ? (completedTasks * 0.000035).toFixed(8)
+      : (completedTasks * 0.0035).toFixed(6));
 
   const walletStatus = !wallet
     ? "No wallet connected"
@@ -348,7 +360,7 @@ export default function WalletPage() {
                 )}
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Lifetime routed</div>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Lifetime earnings</div>
                 <div className="mt-2 text-base font-semibold text-white">{lifetimeEarnings} {chain.symbol}</div>
               </div>
             </div>
@@ -419,10 +431,31 @@ export default function WalletPage() {
                 </div>
               </button>
 
-              {showWalletPicker && walletOptions.length === 0 && (
+              {showWalletPicker && walletsLoading && (
+                <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
+                  <div className="text-sm font-semibold text-white">Discovering wallets…</div>
+                  <div className="mt-2 text-xs leading-6 text-slate-400">Scanning for EIP-6963 providers and browser extensions.</div>
+                </div>
+              )}
+
+              {showWalletPicker && !walletsLoading && walletOptions.length === 0 && (
                 <div className="rounded-[24px] border border-white/8 bg-white/[0.03] p-4">
                   <div className="text-sm font-semibold text-white">No wallet detected</div>
                   <div className="mt-2 text-xs leading-6 text-slate-400">{NO_WALLET_MESSAGE}</div>
+                  <div className="mt-3 flex flex-col gap-2">
+                    {MOBILE_WALLET_INSTALLS.map((option) => (
+                      <a
+                        key={option.name}
+                        href={option.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:border-cyan-300/25 hover:bg-cyan-400/10"
+                      >
+                        <span>Install {option.name}</span>
+                        <span className="text-xs text-cyan-200">Open</span>
+                      </a>
+                    ))}
+                  </div>
                 </div>
               )}
 

@@ -7,6 +7,8 @@ cmds = ["npm ci", "npx prisma generate --schema=./prisma/schema.prisma"]
 
 [start]
 # Ensure the schema is applied to the database before booting, then start.
-# `prisma db push` is idempotent. --accept-data-loss handles schema drift
-# (e.g. columns or tables from an older schema that no longer exist).
-cmd = "sh -c 'npx prisma db push --schema=./prisma/schema.prisma --accept-data-loss && node src/index.js'"
+# `prisma migrate deploy` applies tracked, versioned migrations in order.
+# It is non-destructive (never drops data) and idempotent, unlike the legacy
+# `prisma db push --accept-data-loss` (which could drop columns/tables on
+# schema drift).
+cmd = "sh -c 'npx prisma migrate deploy --schema=./prisma/schema.prisma && node src/index.js'"

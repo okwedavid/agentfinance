@@ -64,6 +64,11 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
   if (existing.status === 'completed' || existing.status === 'failed') {
     return { status: existing.status };
   }
+  // A client may cancel a task while it is waiting/running (restricted PATCH).
+  // Respect that terminal state so a stale worker job cannot resurrect it.
+  if (existing.status === 'cancelled') {
+    return { status: 'cancelled' };
+  }
 
   const taskTimeoutMs = timeoutMs || envInt('AGENT_TASK_TIMEOUT_MS', DEFAULT_TASK_TIMEOUT_MS);
   const controller = new AbortController();

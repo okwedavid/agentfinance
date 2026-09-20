@@ -145,6 +145,10 @@ export async function patchTask(id: string, patch: Record<string, unknown>) {
   });
 }
 
+export async function retryTask(id: string) {
+  return apiFetch(`/tasks/${id}/retry`, { method: 'POST' });
+}
+
 export async function deleteTask(id: string) {
   return apiFetch(`/tasks/${id}`, { method: 'DELETE' });
 }
