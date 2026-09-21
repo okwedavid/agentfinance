@@ -282,28 +282,6 @@ export async function runAgent({ action, agentType = 'coordinator', walletAddres
     { role: 'system', content: systemPrompts[agentType] || systemPrompts.coordinator },
     { role: 'user', content: action },
   ];
-  return messages;
-}
-
-// ── Execution agent (no LLM required) ────────────────────────────────────────
-async function runExecutionAgent({ action, walletAddress }) {
-  const actionText = action || '';
-  const routingMatch = actionText.match(/([0-9]+(?:\.[0-9]+)?)\s*ETH/i);
-
-  const liveBalance = walletAddress
-    ? await executeStructuredTool('check_wallet_balance', { wallet_address: walletAddress, tokens: ['ETH'] })
-    : JSON.stringify({ error: 'No wallet connected' });
-
-  if (/route|sweep|transfer|wallet/i.test(actionText)) {
-    const prepared = walletAddress
-      ? await executeStructuredTool('prepare_wallet_transaction', {
-          action: 'transfer',
-          token: 'ETH',
-          amount: routingMatch?.[1] || '0.0000',
-          recipient_address: walletAddress,
-          network: 'ethereum',
-        })
-      : JSON.stringify({ error: 'No wallet connected' });
 
   const primary = primaryProvider();
   if (!primary) {
