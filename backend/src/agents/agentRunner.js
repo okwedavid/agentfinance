@@ -156,8 +156,9 @@ async function executeTool(name, args) {
       default:
         return { result: `Tool ${name} not implemented` };
     }
+  } catch (err) {
+    return { result: `Tool error: ${err.message}` };
   }
-  throw lastError;
 }
 
 const systemPrompts = {

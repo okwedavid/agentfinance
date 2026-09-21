@@ -80,12 +80,6 @@ export function validateEmail(email) {
   return null;
 }
 
-/** Normalise an email for storage: trim whitespace + lowercase the domain and local part. */
-export function normalizeEmailAddress(email) {
-  if (typeof email !== 'string') return email;
-  return email.trim().toLowerCase();
-}
-
 export const EMAIL_STATUS = Object.freeze({
   REGISTERED: 'registered',
   VERIFICATION_REQUIRED: 'verification_required',

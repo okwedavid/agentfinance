@@ -1,0 +1,106 @@
+====================================================================
+ AgentFinance — PUBLIC READINESS / NEXT STEPS
+====================================================================
+ Current date: 2026-09-15
+ Full details: see PUBLIC_READINESS_AUDIT.md in this directory.
+====================================================================
+
+PRODUCTION READINESS
+---------------------
+STATUS: NOT PUBLIC READY.
+Category: Functional but requires significant fixes.
+
+The deployment, CORS, auth, WebSocket and the frontend build all work.
+The core product (AI agent task execution) is BROKEN in production, and
+there is a CRITICAL treasury-drain vulnerability in the payout flow.
+Several endpoints expose all users' data without authentication.
+
+--------------------------------------------------------------------
+CRITICAL BLOCKERS (resolve before any public launch)
+--------------------------------------------------------------------
+1. [BLOCKER - FINANCIAL] Unprotected payout approval
+   - Any registered user can prepare + approve a payout that broadcasts
+     real funds from the live EVM treasury (signer is ready and live).
+   - Files: backend/src/services/payoutService.js:328-381
+            backend/src/index.js:648-656
+            frontend/src/app/wallet/page.tsx:236-247
+   - Fix: gate with admin/operator approval, enforce the unverified
+     approvalToken, add hard amount caps + limits, remove
+     TREASURY_PRIVATE_KEY from the environment until fixed.
+
+2. [BLOCKER - PRODUCT] AI agents completely broken
+   - Live test failed on ALL 7 providers:
+     Groq 401 (invalid key) | Google 404 (gemini-2.0-flash retired) |
+     Anthropic 400 (credit) | Mistral 429 | Cerebras 404 |
+     OpenRouter/Together (unset).
+   - Files: backend/src/agents/agentRunner.js
+   - Fix: use a working provider first (fix Groq key / update to a
+     current Gemini model), add a research-engine fallback so tasks
+     still complete without an LLM, add a per-task global timeout.
+
+3. [BLOCKER - DATA] Unauthenticated analytics endpoints
+   - /analytics/summary, /analytics/history, DELETE /analytics/clear
+     return 200 without auth and leak ALL users' tasks, wallets and
+     payouts; the clear endpoint archives every user's tasks.
+   - File: backend/src/routes/analytics.js
+   - Fix: require JWT, scope queries to req.user.sub.
+
+--------------------------------------------------------------------
+HIGH-PRIORITY ITEMS (do directly after the blockers)
+--------------------------------------------------------------------
+4. Require auth on /agents CRUD and /api/factory/* routes
+   (backend/src/routes/agents.js, backend/src/routes/factory.js).
+5. Replace `prisma db push --accept-data-loss` on backend boot with
+   real migrations (backend/src/index.js:45-59, package.json:10,
+   nixpacks.toml).
+6. Frontend dependency vulnerabilities: 9 total, 1 CRITICAL
+   (run `cd frontend && npm audit fix` and review).
+7. Proper logout: add POST /auth/logout to invalidate the server-side
+   session; the httpOnly token cookie currently stays valid 7 days.
+8. Real admin model: "isAdmin" is currently username === 'okwedavid'.
+9. Per-account brute-force protection on /auth/login (global 600/min
+   limiter only).
+10. Remove JWT fallback secrets from source
+    (please_change_me / please_change_me_locally) and enforce
+    JWT_SECRET strength at boot.
+11. Remove demo endpoint /api/tasks/replay and hardcoded credentials
+    (seedDemoUser.js admin@agentfinance.com / password, e2e spec).
+
+--------------------------------------------------------------------
+RECOMMENDED FIXES (once stable)
+--------------------------------------------------------------------
+- Fake data cleanup: demo fleet fallback, earnings = completed*0.0035
+  formula, hardcoded $3200 ETH, random "spread" simulation.
+- WS hardening: token in header/subprotocol (not query string), WS
+  ping/keepalive, message-level auth.
+- Error hygiene: strip "Railway backend env vars" text and leaked
+  err.message/reason in coordinator/factory routes; add security
+  headers (CSP, HSTS); remove x-powered-by.
+- Replace localhost:3000/4000 with real dev origins after removing
+  them from the production CORS allowlist.
+- Graceful shutdown (SIGTERM drain) for the backend worker.
+- Paginate/limit analytics and cache CoinGecko/RPC lookups.
+
+--------------------------------------------------------------------
+DEPLOYMENT / PRE-LAUNCH CHECKLIST (Phase 2 gate)
+--------------------------------------------------------------------
+[ ] New users cannot approve payouts / withdraw treasury funds
+[ ] New users cannot read or delete other users' tasks/analytics
+[ ] /agents and /factory reject unauthenticated requests
+[ ] A real task ("research BTC", "coordinate fleet") completes with
+    usable output on the live site
+[ ] Backend deploys with migrations (no --accept-data-loss)
+[ ] npm audit clean or accepted risk documented
+[ ] Logout invalidates the cookie; brute-force protection live
+[ ] Secrets in env only; JWT_SECRET strong; demo creds removed
+[ ] E2E suite runs against a staging target, not localhost creds
+[ ] CORS allowlist = production origin only
+
+--------------------------------------------------------------------
+IMMEDIATE NEXT FILING ORDER
+--------------------------------------------------------------------
+1. AUDIT FILE ......... PUBLIC_READINESS_AUDIT.md (done)
+2. NEXT STEPS ......... this file (done)
+3. Fix order: Phase 0 (payout gate, analytics auth, migrations),
+   then Phase 1 (restore agents, factory/agents auth),
+   then Phase 2 (logout, brute-force, secrets, deps).
