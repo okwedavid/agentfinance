@@ -9,10 +9,13 @@
  * (AGENT_TASK_TIMEOUT_MS) is enforced end-to-end and aborts in-flight requests.
  */
 import { executeTool as executeStructuredTool } from '../tools/toolExecutor.js';
+import logger from '../utils/logger.js';
 import {
+  ALL_PROVIDERS_FAILED_MESSAGE,
   callProvider,
-  fallbackProvider,
-  primaryProvider,
+  getProviderSpec,
+  providerFallbackOrder,
+  providerIsConfigured,
   ProviderError,
   PROVIDER_ERROR,
   safeMessageFor,
@@ -165,6 +168,7 @@ const systemPrompts = {
   research: `You are a DeFi and crypto research agent. You have access to real-time market data tools.
 Your job is to find and analyse income-generating opportunities in the crypto/DeFi ecosystem.
 Be specific: name protocols, give APY numbers, explain risks clearly.
+If you were NOT actually given live data in this conversation, clearly state which facts are general knowledge and recommend verifying numbers before acting.
 Always end with a concrete recommendation the user can act on.`,
 
   trading: `You are a crypto trading and arbitrage agent with access to live price data.
@@ -176,6 +180,10 @@ Always remind users to verify before executing any trades.`,
 The content should be informative, well-structured, and ready to publish.
 Include relevant statistics, clear explanations, and actionable insights.`,
 
+  general: `You are a clear, accurate AI analysis and explanation agent on AgentFinance.
+Answer questions, explain concepts, summarise text, compare ideas and reason carefully.
+Be concrete and well-structured. If you do not know something, say so rather than guessing.`,
+
   execution: `You are a blockchain transaction agent. You prepare and analyse on-chain transactions.
 When asked to route earnings or check balances, provide step-by-step instructions.
 Always explain what a transaction will do before suggesting execution.`,
@@ -185,12 +193,53 @@ You have access to market data, search, and analysis tools.
 Provide detailed, actionable analysis with specific numbers and recommendations.`,
 };
 
+// Short, greppable log token per normalized error category (never a secret).
+const CATEGORY_TOKEN = {
+  [PROVIDER_ERROR.AUTH]: 'auth_error',
+  [PROVIDER_ERROR.CONFIGURATION]: 'config_error',
+  [PROVIDER_ERROR.MODEL_UNAVAILABLE]: 'model_unavailable',
+  [PROVIDER_ERROR.PAYMENT_REQUIRED]: 'payment_required',
+  [PROVIDER_ERROR.RATE_LIMIT]: 'rate_limited',
+  [PROVIDER_ERROR.TIMEOUT]: 'timeout',
+  [PROVIDER_ERROR.UNAVAILABLE]: 'unavailable',
+  [PROVIDER_ERROR.NETWORK_ERROR]: 'network_error',
+  [PROVIDER_ERROR.INVALID_RESPONSE]: 'invalid_response',
+};
+
+function categoryToken(category) {
+  return CATEGORY_TOKEN[category] || String(category || 'unknown').toLowerCase();
+}
+
+/**
+ * Ordered list of providers the agent is allowed to use for this run.
+ * Per-agent override via <TYPE>_PROVIDER_ORDER (e.g. RESEARCH_PROVIDER_ORDER),
+ * falling back to the global PROVIDER_FALLBACK_ORDER / default chain.
+ * Unconfigured providers are never returned.
+ */
+export function providerOrderForAgent(agentType) {
+  const override = envString(agentType ? `${String(agentType).toUpperCase()}_PROVIDER_ORDER` : '');
+  if (override) {
+    const ids = override.split(',').map((id) => String(id || '').trim().toLowerCase()).filter(Boolean);
+    const order = ids.filter((id) => providerIsConfigured(getProviderSpec(id)));
+    if (order.length > 0) return order;
+  }
+  return providerFallbackOrder();
+}
+
+function envString(name) {
+  const value = typeof process.env[name] === 'string' ? process.env[name].trim() : '';
+  return value || null;
+}
+
 /**
  * Try one provider with bounded retries for transient failures.
  * Returns { content, provider, model } or throws ProviderError.
  */
 async function attemptProvider(spec, messages, { useTools, deadline, signal }) {
-  const maxRetries = envInt('AGENT_PROVIDER_RETRIES', DEFAULT_PROVIDER_RETRIES);
+  // 0 is a valid value: "never retry this provider". envInt rejects it, so parse
+  // the retry count explicitly.
+  const rawRetries = Number.parseInt(process.env.AGENT_PROVIDER_RETRIES, 10);
+  const maxRetries = Number.isFinite(rawRetries) && rawRetries >= 0 ? rawRetries : DEFAULT_PROVIDER_RETRIES;
   let errors = [];
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -227,10 +276,12 @@ async function attemptProvider(spec, messages, { useTools, deadline, signal }) {
  * @param {string|null} [opts.walletAddress]
  * @param {AbortSignal} [opts.signal] global task abort signal (timeout)
  * @param {number} [opts.timeoutMs] overall task budget
+ * @param {string|null} [opts.taskId] for correlation logs
  */
-export async function runAgent({ action, agentType = 'coordinator', walletAddress = null, signal = null, timeoutMs = null }) {
+export async function runAgent({ action, agentType = 'coordinator', walletAddress = null, signal = null, timeoutMs = null, taskId = null }) {
   const taskTimeoutMs = timeoutMs || envInt('AGENT_TASK_TIMEOUT_MS', DEFAULT_TASK_TIMEOUT_MS);
   const deadline = Date.now() + taskTimeoutMs;
+  const tag = `[TASK ${taskId || '?'}]`;
 
   if (agentType === 'execution') {
     const actionText = action || '';
@@ -283,62 +334,75 @@ export async function runAgent({ action, agentType = 'coordinator', walletAddres
     { role: 'user', content: action },
   ];
 
-  const primary = primaryProvider();
-  if (!primary) {
+  // Deterministic provider routing: groq -> gemini -> cerebras by default.
+  // A provider that is not configured is skipped immediately; each failed
+  // attempt moves to the next provider; success stops the chain.
+  const candidates = providerOrderForAgent(agentType);
+  if (candidates.length === 0) {
     throw new ProviderError(
       PROVIDER_ERROR.CONFIGURATION,
-      'No AI provider is configured. Set one of GROQ_API_KEY, GOOGLE_AI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY, TOGETHER_API_KEY, MISTRAL_API_KEY or CEREBRAS_API_KEY.',
+      'No AI provider is configured. Set one of GROQ_API_KEY, GEMINI_API_KEY or CEREBRAS_API_KEY.',
     );
   }
 
-  const secondary = fallbackProvider(primary);
   const failures = [];
+  let lastError = null;
 
-  async function tryProvider(spec) {
+  for (let i = 0; i < candidates.length; i += 1) {
+    const id = candidates[i];
+    const spec = getProviderSpec(id);
+    const model = spec.model ? spec.model : null;
+
+    logger.info(`${tag} route agent=${agentType} provider_attempt=${id}`);
     try {
-      return await attemptProvider(spec, messages, { useTools: true, deadline, signal });
+      const result = await attemptProvider(spec, messages, { useTools: spec.toolsEnabled, deadline, signal });
+      const usedModel = result.model || model;
+      logger.info(`${tag} provider_result=success provider=${id} model=${usedModel || 'unknown'}`);
+      return {
+        success: true,
+        output: result.content,
+        provider: result.provider,
+        model: usedModel,
+        agentType,
+      };
     } catch (err) {
       const providerError = err instanceof ProviderError
         ? err
-        : new ProviderError(PROVIDER_ERROR.UNAVAILABLE, String(err), { provider: spec.id });
-      providerError.provider = providerError.provider || spec.id;
+        : new ProviderError(PROVIDER_ERROR.UNAVAILABLE, String(err), { provider: id });
+      providerError.provider = providerError.provider || id;
       failures.push({
-        provider: spec.id,
+        provider: id,
         category: providerError.category,
         status: providerError.status || null,
         message: providerError.message,
       });
-      return null;
+      lastError = providerError;
+      logger.info(`${tag} provider_result=${categoryToken(providerError.category)} provider=${id}`);
+      if (i < candidates.length - 1) {
+        logger.info(`${tag} fallback=${candidates[i + 1]}`);
+      }
     }
   }
 
-  // Primary provider.
-  let result = await tryProvider(primary);
-  // Fallback provider (only tried when the primary failed).
-  if (!result && secondary) {
-    result = await tryProvider(secondary);
-  }
-
-  if (result) {
-    return {
-      success: true,
-      output: result.content,
-      provider: result.provider,
-      model: result.model || null,
-      agentType,
-    };
-  }
-
   const firstFailure = failures[0] || { provider: null, category: PROVIDER_ERROR.UNAVAILABLE };
+
+  // Honest message: when only one provider is in the chain its own category
+  // message is the accurate one (e.g. TIMEOUT -> "timed out"); with multiple
+  // failed providers we surface the generic all-providers message.
+  const fallbackMessage = failures.length === 1
+    ? safeMessageFor(firstFailure.category, firstFailure.provider)
+    : ALL_PROVIDERS_FAILED_MESSAGE;
+
   const error = new ProviderError(
     firstFailure.category,
-    safeMessageFor(firstFailure.category, firstFailure.provider),
+    fallbackMessage,
     { provider: firstFailure.provider },
   );
   error.diagnostics = failures;
+  if (lastError) error.lastReason = lastError.message;
 
   const summary = failures.map((f) => `${f.provider}:${f.category}`).join(', ');
-  console.error(`[AgentRunner] All AI providers failed (${summary}).`);
+  logger.error(`${tag} all_providers_failed (${summary})`);
   throw error;
 }
 

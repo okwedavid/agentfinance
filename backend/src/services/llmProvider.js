@@ -17,6 +17,9 @@ export const PROVIDER_ERROR = Object.freeze({
   RATE_LIMIT: 'PROVIDER_RATE_LIMIT',
   TIMEOUT: 'PROVIDER_TIMEOUT',
   UNAVAILABLE: 'PROVIDER_UNAVAILABLE',
+  NETWORK_ERROR: 'PROVIDER_NETWORK_ERROR',
+  MODEL_UNAVAILABLE: 'PROVIDER_MODEL_UNAVAILABLE',
+  PAYMENT_REQUIRED: 'PROVIDER_PAYMENT_REQUIRED',
   INVALID_RESPONSE: 'PROVIDER_INVALID_RESPONSE',
   CONFIGURATION: 'PROVIDER_CONFIGURATION_ERROR',
 });
@@ -25,6 +28,7 @@ const RETRYABLE_CATEGORIES = new Set([
   PROVIDER_ERROR.RATE_LIMIT,
   PROVIDER_ERROR.TIMEOUT,
   PROVIDER_ERROR.UNAVAILABLE,
+  PROVIDER_ERROR.NETWORK_ERROR,
 ]);
 
 export class ProviderError extends Error {
@@ -69,11 +73,25 @@ const PROVIDER_SPECS = {
   },
   google: {
     id: 'google',
-    displayName: 'Google',
+    displayName: 'Google AI',
     keyEnv: 'GOOGLE_AI_API_KEY',
     modelEnv: 'GOOGLE_AI_MODEL',
-    // gemini-2.0-flash was retired (404). gemini-2.5-flash is the current
-    // stable price-performance model on the Gemini API.
+    // Legacy alias kept only for backward-compatible health flags. The active
+    // Gemini spec below is the one wired into the provider router.
+    defaultModel: 'gemini-2.5-flash',
+    maxTokens: 4096,
+    format: 'google',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    toolsEnabled: false,
+    legacy: true,
+  },
+  gemini: {
+    id: 'gemini',
+    displayName: 'Gemini',
+    keyEnv: 'GEMINI_API_KEY',
+    modelEnv: 'GEMINI_MODEL',
+    // gemini-2.5-flash verified live against the configured account (returns a
+    // marker completion); 2.0-flash and 2.5-pro return 404 on this key.
     defaultModel: 'gemini-2.5-flash',
     maxTokens: 4096,
     format: 'google',
@@ -129,8 +147,12 @@ const PROVIDER_SPECS = {
     displayName: 'Cerebras',
     keyEnv: 'CEREBRAS_API_KEY',
     modelEnv: 'CEREBRAS_MODEL',
-    defaultModel: 'llama3.1-8b',
-    maxTokens: 2048,
+    // Verified live: the account catalog is now ['gpt-oss-120b','qwen-3.8-27b'];
+    // the legacy llama3.1-8b ids return 404. NOTE: this account currently gets
+    // HTTP 402 payment_required on chat completions, so Cerebras is configured
+    // but its generation is billing-blocked until the account has credit.
+    defaultModel: 'gpt-oss-120b',
+    maxTokens: 4096,
     format: 'openai',
     baseUrl: 'https://api.cerebras.ai/v1/chat/completions',
     toolsEnabled: false,
@@ -138,7 +160,37 @@ const PROVIDER_SPECS = {
 };
 
 // Definitive fallback priority when LLM_PROVIDER is not explicitly set.
-const PRIORITY_ORDER = ['groq', 'google', 'anthropic', 'openrouter', 'together', 'mistral', 'cerebras'];
+const PRIORITY_ORDER = ['groq', 'gemini', 'google', 'anthropic', 'openrouter', 'together', 'mistral', 'cerebras'];
+
+// The production provider routing chain. Groq first (low-latency), Gemini
+// second (verified working), Cerebras third (newest). Ordered via
+// PROVIDER_FALLBACK_ORDER (comma-separated provider ids) when set.
+const DEFAULT_FALLBACK_ORDER = ['groq', 'gemini', 'cerebras'];
+
+/**
+ * Deterministic, environment-driven provider order for task execution.
+ * Providers whose API key is not configured are skipped immediately — a missing
+ * key must never fail the task, it must just move routing to the next provider.
+ *
+ * Bonus semantic: when LLM_PROVIDER is set to one of the providers AND it is
+ * configured, it is moved to the front (explicit primary intent), but an
+ * explicitly-named-but-unconfigured LLM_PROVIDER is simply skipped, never fatal.
+ */
+export function providerFallbackOrder() {
+  const raw = envString('PROVIDER_FALLBACK_ORDER') || DEFAULT_FALLBACK_ORDER.join(',');
+  const order = raw
+    .split(',')
+    .map((id) => String(id || '').trim().toLowerCase())
+    .filter(Boolean);
+
+  const explicitPrimary = getProviderSpec(process.env.LLM_PROVIDER);
+  const configured = order.filter((id) => providerIsConfigured(PROVIDER_SPECS[id]));
+
+  if (explicitPrimary && providerIsConfigured(explicitPrimary) && !configured.includes(explicitPrimary.id)) {
+    configured.unshift(explicitPrimary.id);
+  }
+  return configured;
+}
 
 export function getProviderSpec(id) {
   const key = String(id || '').toLowerCase();
@@ -194,24 +246,27 @@ export function fallbackProvider(primary) {
 
 function classifyHttpError(status, bodyText, providerName) {
   if (status === 401 || status === 403) return PROVIDER_ERROR.AUTH;
+  if (status === 402) return PROVIDER_ERROR.PAYMENT_REQUIRED;
   if (status === 429) return PROVIDER_ERROR.RATE_LIMIT;
   if (status === 408) return PROVIDER_ERROR.TIMEOUT;
   if (status === 404) {
-    return /model|not found|no such/i.test(bodyText)
-      ? PROVIDER_ERROR.CONFIGURATION
+    return /model|not found|no such|deployment/i.test(bodyText)
+      ? PROVIDER_ERROR.MODEL_UNAVAILABLE
       : PROVIDER_ERROR.UNAVAILABLE;
   }
   if (status >= 500) return PROVIDER_ERROR.UNAVAILABLE;
-  // 400 + malformed model usually means a configuration problem.
+  // 400 + malformed model usually means an unsupported model name.
   if (status === 400) {
-    return /model|malformed|invalid|unsupported|could not parse/i.test(bodyText)
-      ? PROVIDER_ERROR.CONFIGURATION
+    return /model|malformed|invalid|unsupported|could not parse|not allowed/i.test(bodyText)
+      ? PROVIDER_ERROR.MODEL_UNAVAILABLE
       : PROVIDER_ERROR.UNAVAILABLE;
   }
   return PROVIDER_ERROR.UNAVAILABLE;
 }
 
 /** Safe, user-facing message per category. Never includes credentials or bodies. */
+export const ALL_PROVIDERS_FAILED_MESSAGE = 'AI execution is temporarily unavailable. All configured AI providers failed.';
+
 export function safeMessageFor(category, providerName = null) {
   const name = providerName ? `${providerName} ` : '';
   switch (category) {
@@ -219,12 +274,18 @@ export function safeMessageFor(category, providerName = null) {
       return `AI provider ${name}could not authenticate. Check the server-side API key configuration.`;
     case PROVIDER_ERROR.CONFIGURATION:
       return `AI provider ${name}is not configured correctly. Check the server-side model configuration.`;
+    case PROVIDER_ERROR.MODEL_UNAVAILABLE:
+      return `AI provider ${name}does not offer the configured model. Check the server-side model configuration.`;
+    case PROVIDER_ERROR.PAYMENT_REQUIRED:
+      return `AI provider ${name}requires billing configuration before it can execute tasks.`;
     case PROVIDER_ERROR.RATE_LIMIT:
       return 'AI provider is temporarily rate limited. Please try again.';
     case PROVIDER_ERROR.TIMEOUT:
       return 'The agent task timed out. Please try again.';
     case PROVIDER_ERROR.UNAVAILABLE:
       return 'AI provider temporarily unavailable. Please try again.';
+    case PROVIDER_ERROR.NETWORK_ERROR:
+      return 'AI provider could not be reached. Please try again.';
     case PROVIDER_ERROR.INVALID_RESPONSE:
       return 'The AI provider returned an empty response. Please try again.';
     default:
@@ -438,10 +499,9 @@ export async function callProvider(spec, messages, { useTools = false, timeoutMs
   } catch (err) {
     if (err instanceof ProviderError) throw err;
     if (err?.name === 'AbortError') {
-      const category = signal?.aborted ? PROVIDER_ERROR.TIMEOUT : PROVIDER_ERROR.TIMEOUT;
-      throw new ProviderError(category, `${spec.displayName} request aborted.`, { provider: spec.id });
+      throw new ProviderError(PROVIDER_ERROR.TIMEOUT, `${spec.displayName} request aborted.`, { provider: spec.id });
     }
-    throw new ProviderError(PROVIDER_ERROR.UNAVAILABLE, `${spec.displayName} network error: ${err?.message || 'unknown'}`, { provider: spec.id });
+    throw new ProviderError(PROVIDER_ERROR.NETWORK_ERROR, `${spec.displayName} network error: ${err?.message || 'unknown'}`, { provider: spec.id });
   }
 
   const parsed = parseContent(spec, data);

@@ -35,10 +35,11 @@ function setProviderEnv(extra = {}) {
 function clearProviderEnv() {
   for (const key of [
     'GROQ_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'TOGETHER_API_KEY',
-    'MISTRAL_API_KEY', 'CEREBRAS_API_KEY', 'GOOGLE_AI_API_KEY',
+    'MISTRAL_API_KEY', 'CEREBRAS_API_KEY', 'GOOGLE_AI_API_KEY', 'GEMINI_API_KEY',
     'LLM_PROVIDER', 'LLM_FALLBACK_PROVIDER', 'LLM_MODEL', 'LLM_FALLBACK_MODEL',
+    'PROVIDER_FALLBACK_ORDER',
     'AGENT_TASK_TIMEOUT_MS', 'AGENT_PROVIDER_RETRIES',
-    'GROQ_MODEL', 'ANTHROPIC_MODEL', 'GOOGLE_AI_MODEL',
+    'GROQ_MODEL', 'ANTHROPIC_MODEL', 'GOOGLE_AI_MODEL', 'GEMINI_MODEL', 'CEREBRAS_MODEL',
   ]) {
     delete process.env[key];
   }
@@ -130,12 +131,12 @@ test('2. invalid credentials produce a normalized AUTH error without raw secrets
   );
 });
 
-test('3. unsupported model produces a CONFIGURATION error', async () => {
+test('3. unsupported model produces a MODEL_UNAVAILABLE error', async () => {
   setProviderEnv({ LLM_PROVIDER: 'groq', GROQ_MODEL: 'model-does-not-exist' });
   stubFetch(async () => openaiError(404, 'model not found'));
   await assert.rejects(
     runAgent({ action: 'hi' }),
-    (err) => err instanceof ProviderError && err.category === PROVIDER_ERROR.CONFIGURATION,
+    (err) => err instanceof ProviderError && err.category === PROVIDER_ERROR.MODEL_UNAVAILABLE,
   );
 });
 
@@ -163,8 +164,8 @@ test('5. permanent provider failure (401) is NOT retried endlessly', async () =>
   assert.equal(calls, 1, 'auth errors must not be retried');
 });
 
-test('6. fallback provider is attempted when the primary fails', async () => {
-  setProviderEnv({ LLM_PROVIDER: 'groq', LLM_FALLBACK_PROVIDER: 'anthropic', AGENT_PROVIDER_RETRIES: '1' });
+test('6. fallback provider (ordered chain) is attempted when the primary fails', async () => {
+  setProviderEnv({ LLM_PROVIDER: 'groq', PROVIDER_FALLBACK_ORDER: 'groq,anthropic', AGENT_PROVIDER_RETRIES: '1' });
   stubFetch(async (url) => {
     if (String(url).includes('api.anthropic.com')) return anthropicResult('Anthropic fallback worked.');
     return openaiError(429, 'groq rate limited');
