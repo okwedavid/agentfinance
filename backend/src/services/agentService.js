@@ -86,6 +86,7 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
     id: running.id,
     status: 'running',
     action: running.action || action,
+    userId: running.userId || existing.userId || userId,
   });
 
   const activeWallet = walletAddress || (await resolveActiveWallet(userId || existing.userId));
@@ -119,6 +120,7 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
       result: resultPayload,
       summary: resultPayload.summary,
       provider: result.provider,
+      userId: userId || existing.userId || updated.userId,
     });
     logger.info(`[Agent] Task ${taskId} completed via ${result.provider}.`);
     return { status: 'completed' };
@@ -152,6 +154,7 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
       action: action,
       error: safeMessage,
       failureType,
+      userId: userId || existing.userId,
     });
 
     return { status: 'failed' };

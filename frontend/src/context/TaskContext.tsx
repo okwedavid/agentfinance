@@ -37,7 +37,7 @@ const ws = useWebSocket();
   }
 
   async function create(payload:{ action:string; input?:any; agentId?:string }){
-    const t = await apiFetch('/tasks/dispatch', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(payload) });
+    const t = await apiFetch('/tasks', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(payload) });
     setTasks(prev=>[t, ...prev]);
     return t;
   }

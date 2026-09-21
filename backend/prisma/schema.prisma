@@ -71,12 +71,15 @@ model Task {
   duration    Int?
   result      String?
   archived    Boolean   @default(false)
+  retryCount  Int       @default(0)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   Agent    Agent?    @relation(fields: [agentId], references: [id])
   User     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages Message[]
+
+  @@index([userId])
 }
 
 model Message {

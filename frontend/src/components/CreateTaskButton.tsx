@@ -18,7 +18,7 @@ export default function CreateTaskButton(){
     if(!action) { setError('Action is required'); return; }
     setLoading(true);
     try{
-      const t = await apiFetch('/tasks/dispatch', {
+      const t = await apiFetch('/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, input: parsed }),

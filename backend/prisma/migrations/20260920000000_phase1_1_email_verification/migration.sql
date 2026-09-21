@@ -11,7 +11,7 @@ ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "emailVerificationToken" TEXT;
 ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "emailVerificationExpiresAt" TIMESTAMP(3);
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_index WHERE indexname = 'User_emailVerificationToken_key') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'User_emailVerificationToken_key') THEN
     CREATE UNIQUE INDEX "User_emailVerificationToken_key" ON "User"("emailVerificationToken");
   END IF;
 END $$;

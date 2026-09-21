@@ -1,17 +1,23 @@
 import express from 'express';
 import prisma from '../prismaClient.js';
-import { requireRole, ROLE_ADMIN, ROLE_SUPER_ADMIN } from '../middleware/auth.js';
-import { fullFactoryRun, generateIdeaService, evaluateIdeaService, generatePublishingService } from '../services/factoryService.js';
+import { authMiddleware, requireRole, ROLE_ADMIN, ROLE_SUPER_ADMIN } from '../middleware/auth.js';
+import { fullFactoryRun, generateIdeaService, evaluateIdeaService } from '../services/factoryService.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
 
-// Every factory endpoint requires an authenticated user; the role is resolved
-// server-side so user-scoped routes know whether the caller is an admin.
-router.use(requireRole(['USER', ROLE_ADMIN, ROLE_SUPER_ADMIN]));
+// Authentication is enforced BEFORE the role check. requireRole() only
+// resolves the role after authMiddleware completes, so both middlewares must
+// run in order — mounting requireRole alone would reject every request.
+router.use(authMiddleware, requireRole(['USER', ROLE_ADMIN, ROLE_SUPER_ADMIN]));
 
 function isAdmin(req) {
   return req.userRole === ROLE_ADMIN || req.userRole === ROLE_SUPER_ADMIN;
+}
+
+function safeFail(res, error) {
+  logger.error(`factory error: ${error.stack || error.message || error}`);
+  return res.status(500).json({ error: 'The factory request could not be completed.' });
 }
 
 // Generate single idea only
@@ -21,7 +27,7 @@ router.post('/idea', async (req, res) => {
     const idea = await generateIdeaService(niche || null);
     res.json(idea);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return safeFail(res, e);
   }
 });
 
@@ -33,7 +39,7 @@ router.post('/evaluate', async (req, res) => {
     const evaluation = await evaluateIdeaService(idea);
     res.json(evaluation);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return safeFail(res, e);
   }
 });
 
@@ -67,7 +73,7 @@ router.post('/generate', async (req, res) => {
         const r = await fullFactoryRun({ nicheHint: niche || null, userId, persist: true });
         results.push(r.manifest);
       } catch (e) {
-        results.push({ error: e.message, index: i });
+        results.push({ error: 'Item failed during processing.', index: i });
       }
     }
 
@@ -87,7 +93,7 @@ router.post('/generate', async (req, res) => {
     return res.json({ run: completed, products: results });
   } catch (e) {
     logger.error('factory generate error', e);
-    res.status(500).json({ error: e.message });
+    return safeFail(res, e);
   }
 });
 
@@ -104,7 +110,7 @@ router.get('/products', async (req, res) => {
     });
     res.json(products);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return safeFail(res, e);
   }
 });
 
@@ -117,7 +123,7 @@ router.get('/products/:slug', async (req, res) => {
     if (!product) return res.status(404).json({ error: 'not found' });
     res.json(product);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return safeFail(res, e);
   }
 });
 
@@ -130,7 +136,7 @@ router.get('/products/:slug/publishing', async (req, res) => {
     if (!product) return res.status(404).json({ error: 'not found' });
     res.json(product.publishingAssets);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return safeFail(res, e);
   }
 });
 
@@ -141,7 +147,7 @@ router.get('/runs', async (req, res) => {
     const runs = await prisma.factoryRun.findMany({ where, orderBy: { createdAt: 'desc' }, take: 20 });
     res.json(runs);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return safeFail(res, e);
   }
 });
 
@@ -155,7 +161,7 @@ router.delete('/products/:slug', async (req, res) => {
     await prisma.digitalProduct.delete({ where: { slug: req.params.slug } });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return safeFail(res, e);
   }
 });
 

@@ -229,6 +229,14 @@ async function buildUnsignedPayload({ network, recipientAddress, amount, signer 
   }
 
   const rpcUrl = getEvmRpcUrl(network.id);
+  let rpcHost = null;
+  if (rpcUrl) {
+    try {
+      rpcHost = new URL(rpcUrl).host;
+    } catch {
+      rpcHost = null;
+    }
+  }
   return {
     kind: 'evm_native_transfer',
     network: network.id,
@@ -238,7 +246,7 @@ async function buildUnsignedPayload({ network, recipientAddress, amount, signer 
     recipientAddress,
     treasuryAddress: signer.treasuryAddress,
     rpcConfigured: !!rpcUrl,
-    rpcUrlHint: rpcUrl ? cleanText(rpcUrl).slice(0, 64) : null,
+    rpcHost,
   };
 }
 

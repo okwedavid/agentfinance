@@ -134,7 +134,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setToken(null);
     setIsNewUser(false);
-    window.location.href = "/register";
+    window.location.href = "/login";
   }
 
   useEffect(() => {

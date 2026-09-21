@@ -15,6 +15,23 @@ export function getTokenFromRequest(req) {
   return null;
 }
 
+// Verify a JWT and confirm its session is still live and unrevoked. Shared by
+// the HTTP authMiddleware and the WebSocket authentication handshake so both
+// transport layers enforce the identical session policy.
+export async function resolveUserFromToken(token) {
+  if (!token || !JWT_SECRET) return null;
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return null;
+  }
+  if (!payload?.sid || !payload?.sub) return null;
+  const session = await prisma.authSession.findUnique({ where: { id: payload.sid } });
+  if (!session || session.revoked || session.userId !== payload.sub) return null;
+  return { user: payload, sid: payload.sid };
+}
+
 // One active device per account: revoke every prior session, then issue one new
 // session for the user. Used on login, register, and OAuth completion.
 export async function createSessionForUser(userId) {
@@ -30,31 +47,24 @@ export async function authMiddleware(req, res, next) {
   try {
     const token = getTokenFromRequest(req);
     if (!token) return res.status(401).json({ error: 'unauthenticated' });
-    const payload = jwt.verify(token, JWT_SECRET);
-    if (!payload?.sid) return res.status(401).json({ error: 'session_expired' });
-
-    const session = await prisma.authSession.findUnique({ where: { id: payload.sid } });
-    if (!session || session.revoked || session.userId !== payload.sub) {
-      return res.status(401).json({ error: 'session_expired' });
-    }
-
-    req.user = payload;
-    req.sid = payload.sid;
+    const resolved = await resolveUserFromToken(token);
+    if (!resolved) return res.status(401).json({ error: 'session_expired' });
+    req.user = resolved.user;
+    req.sid = resolved.sid;
     return next();
-  } catch (error) {
-    if (error?.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'session_expired' });
-    }
+  } catch {
     return res.status(401).json({ error: 'unauthenticated' });
   }
 }
 
 export function optionalAuth(req, _res, next) {
-  try {
-    const token = getTokenFromRequest(req);
-    if (token) req.user = jwt.verify(token, JWT_SECRET);
-  } catch {
-    req.user = null;
+  const token = getTokenFromRequest(req);
+  if (token) {
+    resolveUserFromToken(token).then((resolved) => {
+      if (resolved) req.user = resolved.user;
+      return next();
+    }).catch(() => next());
+    return;
   }
   return next();
 }

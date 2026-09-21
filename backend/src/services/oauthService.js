@@ -199,5 +199,16 @@ export function resolveOauthSuccessUrl() {
       'OAuth login cannot complete: set OAUTH_SUCCESS_URL (or FRONTEND_URL) to the frontend origin (e.g. https://agentfinance.onrender.com).',
     );
   }
+  // Only allow http(s) URLs — a malformed or javascript: value must never be
+  // used as a redirect target.
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('OAUTH_SUCCESS_URL must be a valid http(s) URL.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('OAUTH_SUCCESS_URL must be a valid http(s) URL.');
+  }
   return value.replace(/\/+$/, '');
 }
