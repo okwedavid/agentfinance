@@ -56,9 +56,20 @@ export async function resolveActiveWallet(userId) {
  * @param {number|null} [opts.timeoutMs] overall task budget
  */
 export async function executeAgentTask({ taskId, action, userId = null, agentId = null, walletAddress = null, publish = async () => {}, timeoutMs = null }) {
+  // Real-time events are strictly best-effort: the database is the source of
+  // truth, so a Redis/WebSocket failure must never strand a task in a
+  // non-terminal state nor flip a persisted COMPLETED back to FAILED.
+  const emit = async (type, payload) => {
+    try {
+      await publish(type, payload);
+    } catch (error) {
+      logger.warn(`[TASK ${taskId}] event publish failed (${type}): ${error.message}`);
+    }
+  };
+
   const existing = await prisma.task.findUnique({ where: { id: taskId } }).catch(() => null);
   if (!existing) {
-    logger.warn(`[Agent] Task ${taskId} not found; skipping.`);
+    logger.warn(`[Task] Task ${taskId} not found; skipping.`);
     return { status: 'missing' };
   }
   if (existing.status === 'completed' || existing.status === 'failed') {
@@ -70,6 +81,7 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
     return { status: 'cancelled' };
   }
 
+  const startedAtMs = Date.now();
   const taskTimeoutMs = timeoutMs || envInt('AGENT_TASK_TIMEOUT_MS', DEFAULT_TASK_TIMEOUT_MS);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), taskTimeoutMs);
@@ -78,22 +90,25 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
     where: { id: taskId },
     data: { status: 'running', startedAt: new Date() },
   }).catch((error) => {
-    logger.error(`[Agent] Failed to mark task ${taskId} running: ${error.message}`);
-    return { ...existing, status: 'running' };
+    logger.error(`[TASK ${taskId}] failed to mark running: ${error.message}`);
+    return { ...existing, status: 'running', action: existing.action || action, userId: existing.userId || userId };
   });
 
-  await publish('task:running', {
-    id: running.id,
+  const activeWallet = walletAddress || (await resolveActiveWallet(userId || existing.userId));
+  const agentType = classifyTask(action || '').type;
+  logger.info(`[TASK ${taskId}] queued -> running executor=${agentType}`);
+
+  await emit('task:running', {
+    id: running.id || taskId,
     status: 'running',
     action: running.action || action,
     userId: running.userId || existing.userId || userId,
   });
 
-  const activeWallet = walletAddress || (await resolveActiveWallet(userId || existing.userId));
-  const agentType = classifyTask(action || '').type;
-
   try {
     const result = await runAgent({ action, agentType, walletAddress: activeWallet, signal: controller.signal, timeoutMs: taskTimeoutMs });
+    const providerDurationMs = Date.now() - startedAtMs;
+    logger.info(`[TASK ${taskId}] provider_response_received provider=${result.provider} model=${result.model || 'unknown'} duration=${providerDurationMs}ms`);
 
     const resultPayload = {
       output: result.output,
@@ -108,12 +123,12 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
       data: {
         status: 'completed',
         completedAt: new Date(),
-        duration: Date.now() - running.startedAt?.getTime?.() || undefined,
+        duration: Date.now() - (running.startedAt?.getTime?.() || startedAtMs),
         result: JSON.stringify(resultPayload),
       },
     });
 
-    await publish('task:completed', {
+    await emit('task:completed', {
       id: updated.id,
       status: 'completed',
       action: updated.action,
@@ -122,7 +137,7 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
       provider: result.provider,
       userId: userId || existing.userId || updated.userId,
     });
-    logger.info(`[Agent] Task ${taskId} completed via ${result.provider}.`);
+    logger.info(`[TASK ${taskId}] result_persisted status=completed duration=${Date.now() - startedAtMs}ms provider=${result.provider}`);
     return { status: 'completed' };
   } catch (error) {
     let safeMessage = GENERIC_ERROR_MESSAGE;
@@ -148,7 +163,7 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
       },
     }).catch(() => running);
 
-    await publish('task:failed', {
+    await emit('task:failed', {
       id: updated.id || taskId,
       status: 'failed',
       action: action,
@@ -156,6 +171,7 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
       failureType,
       userId: userId || existing.userId,
     });
+    logger.error(`[TASK ${taskId}] failed stage=agent_execution duration=${Date.now() - startedAtMs}ms type=${failureType}`);
 
     return { status: 'failed' };
   } finally {

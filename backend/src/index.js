@@ -773,10 +773,12 @@ app.post('/tasks', authMiddleware, taskCreateLimiter, async (req, res) => {
     });
 
     if (taskQueue) {
+      await taskQueue.remove(task.id).catch(() => {});
       await taskQueue.add(
         'processTask',
         { taskId: task.id, action, userId: req.user.sub, agentId },
         {
+          jobId: task.id,
           attempts: 1,
           removeOnComplete: { count: 100 },
           removeOnFail: { count: 50 },
@@ -867,28 +869,15 @@ app.patch('/tasks/:id', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Nothing to update.' });
     }
 
+    // Cancel/archive are persisted exactly as requested. They NEVER re-dispatch
+    // a job: cancelling stops execution and archiving hides a task; retries go
+    // through the explicit POST /tasks/:id/retry endpoint.
     const task = await prisma.task.update({
       where: { id: req.params.id },
-      data: {
-        status: 'queued',
-        startedAt: null,
-        completedAt: null,
-        duration: null,
-        result: null,
-      },
+      data: fields,
     });
 
     await publish('agentfi:tasks', { type: 'task:updated', data: sanitizeTask(task) });
-
-    if (taskQueue) {
-      await taskQueue.add(
-        'processTask',
-        { taskId: task.id, action: task.action, userId: req.user.sub, agentId: task.agentId, agentType: classifyAgent(task.action) },
-        { attempts: 1, removeOnComplete: { count: 100 }, removeOnFail: { count: 50 } },
-      );
-    } else {
-      void executeAgentTask({ taskId: task.id, action: task.action, userId: req.user.sub, agentId: task.agentId, publish: (type, data) => publish('agentfi:tasks', { type, data }) });
-    }
 
     res.json(sanitizeTask(task));
   } catch (error) {
@@ -940,7 +929,13 @@ app.post('/tasks/:id/retry', authMiddleware, taskCreateLimiter, async (req, res)
     };
 
     if (taskQueue) {
+      // jobId === task.id: a single idempotent job per task row, so the worker
+      // recovery sweep can inspect the exact job responsible for this task.
+      // The previous job (if any) is removed first so retries re-enqueue rather
+      // than being swallowed by BullMQ's jobId unicity rule.
+      await taskQueue.remove(task.id).catch(() => {});
       await taskQueue.add('processTask', jobData, {
+        jobId: task.id,
         attempts: 1,
         removeOnComplete: { count: 100 },
         removeOnFail: { count: 50 },

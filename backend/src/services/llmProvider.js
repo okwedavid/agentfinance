@@ -58,7 +58,10 @@ const PROVIDER_SPECS = {
     displayName: 'Groq',
     keyEnv: 'GROQ_API_KEY',
     modelEnv: 'GROQ_MODEL',
-    defaultModel: 'llama-3.3-70b-versatile',
+    // llama-3.3-70b-versatile was retired from the accessible account catalog
+    // (HTTP 404 model_not_found). gpt-oss-20b is served on Groq, fast, and
+    // available on this account. Override via GROQ_MODEL when needed.
+    defaultModel: 'openai/gpt-oss-20b',
     maxTokens: 4096,
     format: 'openai',
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
