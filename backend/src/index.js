@@ -73,6 +73,15 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
+// OAuth startup validation: if a provider is enabled but its redirect URI is
+// unresolvable, fail clearly instead of shipping a broken callback. In
+// production this blocks boot; in development it logs a clear warning.
+const oauthValid = assertOAuthConfiguration();
+if (!oauthValid && process.env.NODE_ENV === 'production') {
+  logger.error('FATAL: OAuth configuration is invalid. Fix the redirect URI configuration and redeploy.');
+  process.exit(1);
+}
+
 const prismaSchemaPath = fileURLToPath(new URL('../prisma/schema.prisma', import.meta.url));
 const prismaBinPath = fileURLToPath(new URL('../node_modules/.bin/prisma', import.meta.url));
 
@@ -88,8 +97,9 @@ function syncDatabaseSchema() {
   }
 }
 
-// Ensure the schema is applied before serving traffic, independent of how the
-// process is started (helper/start script overrides may bypass npm scripts).
+// Ensure migrations are applied before serving traffic. Uses the non-destructive
+// `prisma migrate deploy`: it applies only pending migration files and never
+// runs sequence-requiring / data-loss commands like `db push --accept-data-loss`.
 syncDatabaseSchema();
 
 const app = express();
@@ -390,6 +400,7 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
     walletAddress: user?.walletAddress || null,
     walletProfiles: user?.walletProfiles || {},
     preferredNetwork: user?.preferredNetwork || 'ethereum',
+    earnings,
     payoutRuntime,
     earnings,
     earningsRateEth: earningRateEth(),
@@ -543,6 +554,35 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     res.json(serializeUser(user));
   } catch {
     res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.delete('/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.sub;
+
+    const deleted = await prisma.$transaction([
+      prisma.message.deleteMany({ where: { task: { userId } } }),
+      prisma.task.deleteMany({ where: { userId } }),
+      prisma.payout.deleteMany({ where: { userId } }),
+      prisma.digitalProduct.deleteMany({ where: { userId } }),
+      prisma.factoryRun.deleteMany({ where: { userId } }),
+      prisma.user.delete({ where: { id: userId } }),
+    ]);
+
+    res.clearCookie('token', authCookieOptions());
+    res.json({
+      ok: true,
+      redirect: '/login',
+      message: 'Account deleted.',
+      deleted: { tasks: deleted[1]?.count ?? 0, user: 1 },
+    });
+  } catch (error) {
+    logger.error('account delete error', error);
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+    res.status(500).json({ error: 'Account deletion failed.' });
   }
 });
 
@@ -742,17 +782,22 @@ app.post('/tasks', authMiddleware, taskCreateLimiter, async (req, res) => {
 
     await assertTaskCapacity(req.user.sub);
 
+    const agentType = classifyAgent(action);
     const task = await prisma.task.create({
       data: {
         id: uuidv4(),
         action,
-        status: 'pending',
+        status: 'queued',
         userId: req.user.sub,
         agentId,
       },
     });
 
-    await publish('agentfi:tasks', { type: 'task:created', data: sanitizeTask(task) });
+    await publish('agentfi:tasks', {
+      type: 'task:created',
+      data: { id: task.id, status: 'queued', agentType },
+      correlationId: task.id,
+    });
 
     if (taskQueue) {
       await taskQueue.add(
@@ -851,9 +896,27 @@ app.patch('/tasks/:id', authMiddleware, async (req, res) => {
 
     const task = await prisma.task.update({
       where: { id: req.params.id },
-      data: fields,
+      data: {
+        status: 'queued',
+        startedAt: null,
+        completedAt: null,
+        duration: null,
+        result: null,
+      },
     });
+
     await publish('agentfi:tasks', { type: 'task:updated', data: sanitizeTask(task) });
+
+    if (taskQueue) {
+      await taskQueue.add(
+        'processTask',
+        { taskId: task.id, action: task.action, userId: req.user.sub, agentId: task.agentId, agentType: classifyAgent(task.action) },
+        { attempts: 1, removeOnComplete: { count: 100 }, removeOnFail: { count: 50 } },
+      );
+    } else {
+      void runTaskInline(task);
+    }
+
     res.json(sanitizeTask(task));
   } catch (error) {
     logger.error('task patch error', error);

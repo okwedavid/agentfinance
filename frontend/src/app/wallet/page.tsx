@@ -654,6 +654,7 @@ export default function WalletPage() {
 
       <PageFooter />
       <BottomNav />
+      <WalletPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} />
     </div>
   );
 }

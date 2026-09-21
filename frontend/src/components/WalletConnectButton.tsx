@@ -4,8 +4,8 @@ import { API_URL } from '@/lib/env';
 import { getToken } from '@/lib/api';
 
 export default function WalletConnectButton() {
-  const [addr, setAddr] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { address, syncingToBackend } = useWallet();
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const s = localStorage.getItem('agentfi_wallet');

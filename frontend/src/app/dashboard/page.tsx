@@ -14,6 +14,7 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { BottomNav, PageFooter, TopNav } from "@/components/layout/Nav";
+import TaskStatusBadge, { taskTerminalReason } from "@/components/TaskStatusBadge";
 
 const TEMPLATES = [
   "Research today's best DeFi yield opportunities with risks and expected returns.",
@@ -130,6 +131,7 @@ function TaskCard({
   onReview: (task: any) => void;
 }) {
   const hasOutput = extractSummary(task).length > 0;
+  const terminalReason = taskTerminalReason(task.result);
 
   return (
     <motion.div
@@ -139,19 +141,11 @@ function TaskCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`h-2.5 w-2.5 rounded-full ${
-              task.status === "completed"
-                ? "bg-emerald-300"
-                : task.status === "failed"
-                  ? "bg-rose-300"
-                  : task.status === "running"
-                    ? "bg-cyan-300 animate-pulse"
-                    : "bg-amber-300"
-            }`} />
-            <span className="text-xs uppercase tracking-[0.2em] text-slate-500">{task.status}</span>
+            <TaskStatusBadge status={task.status} showSpinner={false} />
           </div>
           <p className="mt-3 text-sm font-medium leading-7 text-white">{task.action}</p>
           <p className="mt-2 text-xs text-slate-500">{new Date(task.createdAt).toLocaleString()}</p>
+          {terminalReason && <p className="mt-2 text-xs text-red-400/90">Reason: {terminalReason}</p>}
         </div>
 
         <button onClick={() => onDelete(task.id)} className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white">
@@ -243,14 +237,21 @@ export default function DashboardPage() {
     const completed = tasks.filter((task) => task.status === "completed").length;
     const running = tasks.filter((task) => task.status === "running").length;
     const failed = tasks.filter((task) => task.status === "failed").length;
+    // Server-authoritative earnings: prefer runtime.earnings (computed from
+    // distinct persisted completed records) over any client-side estimate.
+    const serverEarnings = runtime?.earnings?.totalEth;
+    const earnings =
+      typeof serverEarnings === "number" && Number.isFinite(serverEarnings)
+        ? serverEarnings.toFixed(4)
+        : (completed * 0.0035).toFixed(4);
     return {
       total: tasks.length,
       completed,
       running,
       failed,
-      earnings: (completed * 0.0035).toFixed(4),
+      earnings,
     };
-  }, [tasks]);
+  }, [tasks, runtime?.earnings]);
 
   const recentTasks = showAllRecent ? tasks.slice(0, 10) : tasks.slice(0, 3);
 

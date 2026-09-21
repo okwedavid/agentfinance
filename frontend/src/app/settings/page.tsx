@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { BottomNav, PageFooter, TopNav } from "@/components/layout/Nav";
+import { deleteAccount, logout } from "@/lib/api";
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (value: boolean) => void }) {
   return (

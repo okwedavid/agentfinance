@@ -183,6 +183,14 @@ export async function updateProfile(profile: {
   });
 }
 
+/**
+ * Permanently deletes the signed-in account (tasks, payouts and profile).
+ * Returns { redirect } pointing at `/login`.
+ */
+export async function deleteAccount() {
+  return apiFetch('/auth/me', { method: 'DELETE' });
+}
+
 export async function preparePayout(input: {
   action: string;
   amount: number | string;

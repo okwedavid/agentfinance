@@ -13,6 +13,7 @@ type TaskContextShape = {
   refresh: ()=>Promise<void>;
   create: (payload:{ action:string; input?:any; agentId?:string })=>Promise<Task>;
   patch: (id:string, patch:any)=>Promise<Task>;
+  retry: (id:string)=>Promise<Task>;
   remove: (id:string)=>Promise<void>;
 }
 
@@ -39,6 +40,12 @@ const ws = useWebSocket();
   async function create(payload:{ action:string; input?:any; agentId?:string }){
     const t = await apiFetch('/tasks', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(payload) });
     setTasks(prev=>[t, ...prev]);
+    return t;
+  }
+
+  async function retry(id:string){
+    const t = await apiFetch(`/tasks/${id}/retry`, { method: 'POST', headers: { 'Content-Type':'application/json' } });
+    setTasks(prev=> prev.map(p=> p.id===t.id? t: p));
     return t;
   }
 
@@ -83,7 +90,7 @@ const ws = useWebSocket();
 
   useEffect(()=>{ refresh(); }, []);
 
-  const value: TaskContextShape = { tasks, loading, selectedTask, selectTask, refresh, create, patch, remove };
+  const value: TaskContextShape = { tasks, loading, selectedTask, selectTask, refresh, create, patch, retry, remove };
   return (<TaskContext.Provider value={value}>{children}</TaskContext.Provider>);
 }
 

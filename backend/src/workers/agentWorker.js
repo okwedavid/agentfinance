@@ -24,8 +24,8 @@ if (!REDIS_URL || REDIS_URL.includes('{{')) {
     connection.publish('agentfi:tasks', JSON.stringify({ type, data }));
 
   const worker = new Worker('agent-tasks', async (job) => {
-    const { taskId, action, agentId, userId } = job.data;
-    console.log(`[Worker] Processing task ${taskId}: ${action?.slice(0, 60)}`);
+    const { taskId, action, userId } = job.data;
+    logger.info(`work-start id=${taskId} job=${job.id}`);
 
     // executeAgentTask drives the task to a terminal state and emits the
     // real-time events. It is intentionally NOT rethrown here: provider-level
@@ -45,7 +45,7 @@ if (!REDIS_URL || REDIS_URL.includes('{{')) {
   }, {
     connection,
     concurrency: 3,
-    limiter: { max: 10, duration: 60_000 }, // 10 tasks/minute max
+    limiter: { max: 10, duration: 60_000 },
   });
 
   worker.on('completed', job => console.log(`[Worker] Job ${job.id} processed`));
