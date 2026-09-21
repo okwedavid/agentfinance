@@ -2,14 +2,19 @@
 
 export const ROLE_USER = 'USER';
 export const ROLE_ADMIN = 'ADMIN';
-export const VALID_ROLES = new Set([ROLE_USER, ROLE_ADMIN]);
+export const ROLE_SUPER_ADMIN = 'SUPER_ADMIN';
+export const VALID_ROLES = new Set([ROLE_USER, ROLE_ADMIN, ROLE_SUPER_ADMIN]);
 
 export function normalizeRole(value) {
   return VALID_ROLES.has(value) ? value : ROLE_USER;
 }
 
 export function isAdminRole(value) {
-  return value === ROLE_ADMIN;
+  return value === ROLE_ADMIN || value === ROLE_SUPER_ADMIN;
+}
+
+export function isSuperAdminRole(value) {
+  return value === ROLE_SUPER_ADMIN;
 }
 
 export function defaultRole() {
@@ -24,8 +29,20 @@ export function sanitizeRoleFromRecord(user) {
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,32}$/;
 
+// These names can never be claimed by a new account. `admin`/`super-admin` are
+// reserved to prevent impersonation of privileged UI, and the owner account
+// name (okwedavid) is reserved so it always resolves to the super admin.
+export const RESERVED_USERNAMES = Object.freeze(['admin', 'super-admin', 'okwedavid']);
+
 export function validateUsername(username) {
-  if (typeof username !== 'string' || !USERNAME_RE.test(username.trim())) {
+  const trimmed = typeof username === 'string' ? username.trim() : '';
+  // Check reserved names first, before format validation: "super-admin" is
+  // blocked even though it contains a hyphen and would be rejected by the
+  // regex anyway — checking first gives a clear reserved-name error.
+  if (RESERVED_USERNAMES.includes(trimmed.toLowerCase())) {
+    return 'That username is reserved and cannot be used.';
+  }
+  if (!USERNAME_RE.test(trimmed)) {
     return 'Username must be 3-32 characters using letters, numbers and underscores.';
   }
   return null;
@@ -36,6 +53,14 @@ export function validateUsername(username) {
 // Any custom domain with valid syntax is accepted (no Gmail/Yahoo lock-in).
 // No mailbox-existence probing is performed at signup.
 const EMAIL_RE = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+export function normalizeEmailAddress(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 320) return null;
+  return trimmed.toLowerCase();
+}
 
 export function validateEmail(email) {
   if (email === undefined || email === null) return null; // email is optional
@@ -81,13 +106,16 @@ export function serializeUser(user, { isNewUser = false } = {}) {
     username: user.username,
     email: user.email || null,
     emailVerified: user.emailVerified === true,
-    displayName: user.displayName || null,
+    // The super admin always renders as "super-admin", never as the raw owner
+    // username (okwedavid). Any other account shows its own chosen name.
+    displayName: role === ROLE_SUPER_ADMIN ? 'super-admin' : (user.displayName || null),
     bio: user.bio || null,
     walletAddress: user.walletAddress || null,
     walletProfiles: user.walletProfiles || {},
     preferredNetwork: user.preferredNetwork || 'ethereum',
     role,
-    isAdmin: role === ROLE_ADMIN,
+    isAdmin: isAdminRole(role),
+    isSuperAdmin: role === ROLE_SUPER_ADMIN,
     isNewUser,
   };
 }

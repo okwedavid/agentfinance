@@ -76,8 +76,8 @@ router.get('/summary', async (req, res) => {
 
 router.get('/history', async (req, res) => {
   try {
-    const take = parseInt(req.query.limit, 10) || 50;
-    const skip = parseInt(req.query.offset ?? req.query.skip, 10) || 0;
+    const take = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+    const skip = Math.max(parseInt(req.query.offset ?? req.query.skip, 10) || 0, 0);
     const rows = await prisma.task.findMany({
       where: { archived: false, userId: req.user.sub },
       orderBy: { createdAt: 'desc' },

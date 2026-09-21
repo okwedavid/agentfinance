@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { API_URL } from '@/lib/env';
+import { getToken, isLoggedIn } from '@/lib/api';
 
 type Product = {
   id: string;
@@ -15,6 +16,14 @@ type Product = {
   outcome?: string;
 };
 
+function authHeaders() {
+  const token = getToken();
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 export default function FactoryPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [generating, setGenerating] = useState(false);
@@ -27,7 +36,7 @@ export default function FactoryPage() {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch(`${API}/api/factory/products?take=50`);
+      const res = await fetch(`${API}/api/factory/products?take=50`, { headers: authHeaders() });
       const data = await res.json();
       if (Array.isArray(data)) setProducts(data);
     } catch (e) {
@@ -35,14 +44,20 @@ export default function FactoryPage() {
     }
   };
 
-  useEffect(() => { fetchProducts(); }, []);
+  useEffect(() => {
+    if (!isLoggedIn()) {
+      window.location.href = '/login';
+      return;
+    }
+    fetchProducts();
+  }, []);
 
   const generate = async () => {
     setGenerating(true);
     try {
       const res = await fetch(`${API}/api/factory/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ niche: niche || null, batch })
       });
       const data = await res.json();

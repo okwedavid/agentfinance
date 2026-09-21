@@ -25,7 +25,7 @@ const NETWORK_LABELS: Record<string, string> = {
 };
 
 export default function ProfilePage() {
-  const { user, refresh } = useAuth();
+  const { user, refresh, logout } = useAuth();
   const [tasks, setTasks] = useState<any[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
   const [runtime, setRuntime] = useState<any>(null);
@@ -121,6 +121,9 @@ export default function ProfilePage() {
                 </div>
               ))}
             </div>
+            <button onClick={() => void logout()} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:bg-white/10">
+              Sign out
+            </button>
           </div>
         </motion.section>
 

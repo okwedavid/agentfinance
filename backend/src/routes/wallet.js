@@ -1,18 +1,10 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
 import { JsonRpcProvider, formatEther } from 'ethers';
 import { normalizeNetwork, isValidAddressForNetwork } from '../services/payoutService.js';
+import { optionalAuth } from '../middleware/auth.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'please_change_me';
-
-function optionalAuth(req, _res, next) {
-  try {
-    const token = req.headers.authorization?.split(' ')[1] || req.cookies?.token;
-    if (token) req.user = jwt.verify(token, JWT_SECRET);
-  } catch {}
-  next();
-}
 
 function getRpcUrl(networkId) {
   const alchemy = process.env.ALCHEMY_API_KEY;
@@ -46,7 +38,7 @@ function getRpcUrl(networkId) {
 async function fetchEvmBalance(address, network) {
   const rpcUrl = getRpcUrl(network.id);
   if (!rpcUrl) {
-    throw new Error(`No RPC endpoint is configured for ${network.label}.`);
+    throw Object.assign(new Error(`No RPC endpoint is configured for ${network.label}.`), { _safe: true });
   }
 
   const provider = new JsonRpcProvider(rpcUrl, network.chainId);
@@ -83,7 +75,7 @@ async function fetchBitcoinBalance(address) {
   const base = (process.env.BTC_API_BASE || 'https://mempool.space/api').replace(/\/$/, '');
   const response = await fetch(`${base}/address/${address}`, { signal: AbortSignal.timeout(6000) });
   if (!response.ok) {
-    throw new Error(`Bitcoin balance lookup failed with HTTP ${response.status}.`);
+    throw Object.assign(new Error(`Bitcoin balance lookup failed with HTTP ${response.status}.`), { _safe: true });
   }
 
   const data = await response.json();
@@ -131,8 +123,13 @@ router.get('/balance', optionalAuth, async (req, res) => {
       : await fetchEvmBalance(address, network);
     return res.json(payload);
   } catch (error) {
+    // Provider/network failures may embed RPC URLs, so the raw message is only
+    // logged — the client gets a safe generic message.
+    if (!error?._safe) {
+      logger.error(`wallet balance error (${network.id}): ${error?.stack || error?.message || error}`);
+    }
     return res.status(500).json({
-      error: error.message,
+      error: error?._safe ? error.message : 'Balance lookup failed. Please try again.',
       address,
       network: network.id,
       balance: null,

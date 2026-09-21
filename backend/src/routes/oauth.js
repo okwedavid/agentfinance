@@ -10,22 +10,15 @@ import {
   fetchOAuthUserInfo,
   getOAuthProvider,
   getRedirectUri,
+  resolveOauthSuccessUrl,
 } from '../services/oauthService.js';
-import { defaultRole, serializeUser, validateEmail, validateUsername } from '../utils/security.js';
+import { createSessionForUser } from '../middleware/auth.js';
+import { defaultRole } from '../utils/security.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET;
-
-function cookieOptions() {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  };
-}
 
 // Short-lived in-memory state store for the OAuth start -> callback handshake.
 const pendingStates = new Map();
@@ -61,21 +54,51 @@ async function deriveUniqueUsername(base) {
   throw new Error('Could not allocate a unique username.');
 }
 
-async function findOrCreateUserFromOAuth({ email, name }) {
-  if (!email) throw new Error('This provider did not return an email address to link an account.');
+function displayNameFor(name, username) {
+  const cleaned = String(name || '').trim();
+  if (cleaned.length > 1 && cleaned.length <= 80) return cleaned;
+  if (cleaned.length > 80) return cleaned.slice(0, 80);
+  return null;
+}
 
-  let user = await prisma.user.findUnique({ where: { email } });
-  if (user) return user;
+async function findOrCreateUserFromOAuth({ providerId, providerSubject, email, name }) {
+  if (!providerSubject && !email) {
+    throw new Error('This provider did not return an identity to link an account.');
+  }
 
-  const username = await deriveUniqueUsername(name || email.split('@')[0]);
+  // 1) Stable per-provider identity.
+  if (providerSubject) {
+    const oauthId = `${providerId}:${providerSubject}`;
+    const existing = await prisma.user.findUnique({ where: { oauthId } });
+    if (existing) return existing;
+  }
+
+  // 2) Email link (providers that return email can connect to an account that
+  //    already logged in with a different method).
+  if (email) {
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      if (providerSubject) {
+        await prisma.user.update({ where: { id: existing.id }, data: { oauthId: `${providerId}:${providerSubject}` } }).catch(() => {});
+      }
+      return existing;
+    }
+    // Also adapt legacy accounts created with an email value in the email field.
+  }
+
+  // 3) Create a new account.
+  const username = await deriveUniqueUsername(name || (email ? email.split('@')[0] : providerSubject || 'user'));
   const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
-  user = await prisma.user.create({
+  const oauthId = providerSubject ? `${providerId}:${providerSubject}` : null;
+  const displayName = displayNameFor(name, username);
+  const user = await prisma.user.create({
     data: {
       username,
-      email,
+      email: email || null,
+      oauthId,
       passwordHash,
       role: defaultRole(),
-      displayName: name || username,
+      ...(displayName ? { displayName } : {}),
     },
   });
   return user;
@@ -83,9 +106,24 @@ async function findOrCreateUserFromOAuth({ email, name }) {
 
 function handleProviderError(res, error) {
   const message = error.message || 'OAuth login failed.';
-  const unavailable = /not configured|Unknown OAuth provider/i.test(message);
+  const unavailable = /not configured|Unknown OAuth provider|OAUTH_SUCCESS_URL/i.test(message);
+  const redirectTarget = resolveOauthSuccessUrlSafe();
   logger.warn(`oauth: ${message}`);
+
+  // When a redirect target is configured, surface the error on the frontend via
+  // a fragment (#error=...) instead of raw JSON, so the user can retry in place.
+  if (redirectTarget && /Invalid or expired OAuth state/.test(message)) {
+    return res.redirect(`${redirectTarget}/auth/callback#error=${encodeURIComponent(message)}`);
+  }
   return res.status(unavailable ? 400 : 500).json({ error: message });
+}
+
+function resolveOauthSuccessUrlSafe() {
+  try {
+    return resolveOauthSuccessUrl();
+  } catch {
+    return null;
+  }
 }
 
 // Public metadata used by the login UI. Returns only configured flags - never
@@ -115,21 +153,31 @@ router.get('/:provider/callback', async (req, res) => {
     if (!provider) return handleProviderError(res, new Error(`Unknown OAuth provider '${providerId}'.`));
 
     if (!consumeState(providerId, req.query.state)) {
-      return res.status(400).json({ error: 'Invalid or expired OAuth state.' });
+      return handleProviderError(res, new Error('Invalid or expired OAuth state. Please try again.'));
     }
 
     const redirectUri = getRedirectUri(provider);
     const accessToken = await exchangeCode(providerId, req.query.code, redirectUri);
     const profile = await fetchOAuthUserInfo(providerId, accessToken);
-    const user = await findOrCreateUserFromOAuth({ email: profile.email, name: profile.name });
-
-    const token = jwt.sign({ sub: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, cookieOptions());
-
-    res.json({
-      ...serializeUser(user, { isNewUser: false }),
-      token,
+    const user = await findOrCreateUserFromOAuth({
+      providerId,
+      providerSubject: profile.providerSubject,
+      email: profile.email,
+      name: profile.name,
     });
+
+    const session = await createSessionForUser(user.id);
+    const token = jwt.sign(
+      { sub: user.id, username: user.username, role: user.role, sid: session.id },
+      JWT_SECRET,
+      { expiresIn: '7d' },
+    );
+
+    // Complete on the frontend: the token travels in the URL fragment, which is
+    // never sent to any server and never written to server logs. The browser
+    // //auth/callback page stores it and redirects to the dashboard.
+    const base = resolveOauthSuccessUrl();
+    return res.redirect(`${base}/auth/callback#access_token=${encodeURIComponent(token)}&provider=${encodeURIComponent(providerId)}`);
   } catch (error) {
     handleProviderError(res, error);
   }

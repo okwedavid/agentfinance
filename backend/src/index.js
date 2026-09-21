@@ -3,7 +3,6 @@ import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
-import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import IORedis from 'ioredis';
@@ -14,27 +13,53 @@ import prisma from './prismaClient.js';
 import analyticsRouter from './routes/analytics.js';
 import dispatchFactory from './routes/dispatch.js';
 import sessionsFactory from './routes/sessions.js';
-import replayRouter from './routes/replay.js';
 import walletRouter from './routes/wallet.js';
-import { authMiddleware, requireAdmin } from './middleware/auth.js';
-import { defaultRole, serializeUser, validateEmail, validatePassword, validateUsername, normalizeEmailAddress } from './utils/security.js';
-import { issueEmailVerification, sendVerificationEmail, verifyEmailByToken, getEmailProviderStatus } from './services/emailService.js';
+import { authMiddleware, createSessionForUser, requireAdmin, requireRole, resolveUserFromToken } from './middleware/auth.js';
+import {
+  ROLE_ADMIN,
+  ROLE_SUPER_ADMIN,
+  defaultRole,
+  isSuperAdminRole,
+  normalizeEmailAddress,
+  normalizeRole,
+  serializeUser,
+  validateEmail,
+  validatePassword,
+  validateUsername,
+} from './utils/security.js';
 import oauthRouter from './routes/oauth.js';
-import rateLimit from './middleware/rateLimit.js';
+import rateLimit, {
+  loginLimiter,
+  registerLimiter,
+  verifyLimiter,
+  taskCreateLimiter,
+  payoutLimiter,
+  factoryLimiter,
+  dispatchLimiter,
+} from './middleware/rateLimit.js';
+import securityHeaders from './middleware/securityHeaders.js';
 import errorHandler from './middleware/errorHandler.js';
 import logger from './utils/logger.js';
-import { classifyAgent } from './agents/taskClassifier.js';
-import { executeTask } from './services/agentService.js';
-import { computeUserEarnings } from './services/earningsService.js';
-import { getGlobalTaskTimeoutMs, getTaskRetryPolicy } from './services/taskLifecycle.js';
-import { providerDiagnostics, configuredProviderSummary } from './providers/providerConfig.js';
-import { assertOAuthConfiguration } from './services/oauthService.js';
+import { executeAgentTask } from './services/agentService.js';
+import { fallbackProvider, primaryProvider, providerModel } from './services/llmProvider.js';
+import { computeUserEarnings, earningRateEth } from './services/earningsService.js';
+import {
+  getEmailProviderStatus,
+  issueEmailVerificationToken,
+  sendVerificationEmail,
+  verifyEmailByToken,
+} from './services/emailService.js';
+import {
+  DEFAULT_TASK_TIMEOUT_MS as DEFAULT_TIMEOUT_MS,
+} from './agents/agentRunner.js';
 import {
   approvePayout,
   listPayouts,
+  listPayoutsForAdmin,
   payoutRuntimeSnapshot,
   preparePayoutPlan,
   refreshPayoutStatus,
+  rejectPayout,
   summariseTaskResult,
   normalizeNetwork,
   isValidAddressForNetwork,
@@ -78,20 +103,26 @@ function syncDatabaseSchema() {
 syncDatabaseSchema();
 
 const app = express();
+app.disable('x-powered-by');
+// Render terminates TLS in front of the app; trusting the first proxy hop keeps
+// req.ip correct for IP-keyed rate limiters.
+app.set('trust proxy', 1);
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: 8 * 1024 });
+
+const isProduction = process.env.NODE_ENV === 'production';
 
 const configuredOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URLS || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-const ALLOWED_ORIGINS = [
-  'https://agentfinance.onrender.com',
-  'http://localhost:3000',
-  'http://localhost:4000',
-  ...configuredOrigins,
-];
+// CORS: the production frontend is always allowed. Localhost origins are only
+// enabled outside production — stale local/Railway origins must never be
+// trusted against the live API.
+const ALLOWED_ORIGINS = isProduction
+  ? ['https://agentfinance.onrender.com', ...configuredOrigins]
+  : ['https://agentfinance.onrender.com', 'http://localhost:3000', 'http://localhost:4000', ...configuredOrigins];
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -102,8 +133,8 @@ app.use(cors({
   credentials: true,
 }));
 app.use(rateLimit);
-app.use(express.json());
-app.use(cookieParser());
+app.use(securityHeaders);
+app.use(express.json({ limit: '256kb' }));
 
 const REDIS_URL = process.env.REDIS_URL;
 const redis = REDIS_URL && !REDIS_URL.includes('{{')
@@ -117,15 +148,6 @@ if (!redis) {
 
 function signToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-}
-
-function authCookieOptions() {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  };
 }
 
 async function bootstrapAdmins() {
@@ -143,6 +165,45 @@ async function bootstrapAdmins() {
 
   if (result.count > 0) {
     logger.info(`Bootstrapped ${result.count} account(s) to ADMIN role from ADMIN_USERNAMES.`);
+  }
+}
+
+// Enforce a single SUPER_ADMIN. The owner is set via SUPER_ADMIN_USERNAME
+// (defaults to the okwedavid owner account). Extra SUPER_ADMIN accounts are
+// demoted to ADMIN. Account creation itself is never automated.
+async function ensureSuperAdmin() {
+  try {
+    const ownerUsername = process.env.SUPER_ADMIN_USERNAME || 'okwedavid';
+    const owner = await prisma.user.findUnique({ where: { username: ownerUsername } });
+    if (owner && owner.role !== ROLE_SUPER_ADMIN) {
+      await prisma.user.update({
+        where: { id: owner.id },
+        data: { role: ROLE_SUPER_ADMIN },
+      });
+      logger.info(`Promoted ${ownerUsername} to SUPER_ADMIN.`);
+    }
+
+    const superAdmins = await prisma.user.findMany({ where: { role: ROLE_SUPER_ADMIN } });
+    for (const admin of superAdmins) {
+      if (admin.username !== ownerUsername) {
+        await prisma.user.update({
+          where: { id: admin.id },
+          data: { role: ROLE_ADMIN },
+        });
+        logger.info(`Demoted ${admin.username} to ADMIN (only ${ownerUsername} may be super admin).`);
+      }
+    }
+  } catch (error) {
+    logger.warn('ensureSuperAdmin skipped', error.message);
+  }
+}
+
+async function bootstrapRun() {
+  try {
+    await bootstrapAdmins();
+    await ensureSuperAdmin();
+  } catch (error) {
+    logger.warn('role bootstrap skipped', error.message);
   }
 }
 
@@ -171,16 +232,74 @@ function sanitizeTask(task) {
   };
 }
 
-async function runTaskInline(task) {
-  const agentType = classifyAgent(task.action);
-  const { outcome } = await executeTask({
-    taskId: task.id,
-    action: task.action,
-    userId: task.userId,
-    agentType,
-    redis,
+function envInt(name, fallback) {
+  const parsed = Number.parseInt(process.env[name], 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function configuredAgentIds() {
+  return (process.env.AGENTS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+// Abuse protection for expensive AI jobs: bounded action size, an allowlisted
+// agent target (never an arbitrary client-supplied name) and per-user active /
+// concurrent task caps so a caller cannot flood unlimited work into the queue.
+const MAX_TASK_ACTION_LENGTH = envInt('MAX_TASK_ACTION_LENGTH', 2000);
+const MAX_ACTIVE_TASKS = envInt('MAX_ACTIVE_TASKS', 25);
+const MAX_CONCURRENT_TASKS = envInt('MAX_CONCURRENT_TASKS', 3);
+const MAX_TASK_RETRIES = envInt('MAX_TASK_RETRIES', 3);
+
+function taskCapacityError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+async function assertTaskCapacity(userId, { checkConcurrent = true } = {}) {
+  const ACTIVE = ['pending', 'queued', 'running', 'retrying'];
+  const rows = await prisma.task.findMany({
+    where: { userId, archived: false, status: { in: ACTIVE } },
+    select: { status: true },
   });
-  logger.info(`inline-task done id=${task.id} outcome=${outcome}`);
+  if (rows.length >= MAX_ACTIVE_TASKS) {
+    throw taskCapacityError(429, 'Too many active tasks. Archive or cancel a task before creating more.');
+  }
+  if (checkConcurrent) {
+    const busy = rows.filter((row) => row.status !== 'pending' && row.status !== 'retrying').length;
+    if (busy >= MAX_CONCURRENT_TASKS) {
+      throw taskCapacityError(429, 'Too many tasks are running concurrently. Wait for one to finish.');
+    }
+  }
+}
+
+function normalizeAgentTarget(agentId) {
+  if (typeof agentId !== 'string') return null;
+  const value = agentId.trim();
+  if (!value) return null;
+  const agents = configuredAgentIds();
+  if (agents.length === 0 || agents.includes(value)) return value;
+  return null;
+}
+
+function llmRuntimeStatus() {
+  let primary = null;
+  let fallback = null;
+  try {
+    const p = primaryProvider();
+    primary = p ? { id: p.id, model: providerModel(p) } : null;
+  } catch (error) {
+    primary = { error: error.message };
+  }
+  try {
+    const f = fallbackProvider(primary?.id ? { id: primary.id } : null);
+    fallback = f ? { id: f.id, model: providerModel(f) } : null;
+  } catch (error) {
+    fallback = { error: error.message };
+  }
+  return { primary, fallback, timeoutMs: process.env.AGENT_TASK_TIMEOUT_MS || DEFAULT_TIMEOUT_MS };
 }
 
 app.get('/health', async (req, res) => {
@@ -197,6 +316,7 @@ app.get('/health', async (req, res) => {
     time: Date.now(),
     db,
     redis: redis ? 'configured' : 'disabled',
+    llm: llmRuntimeStatus(),
     agentsConfigured: (process.env.AGENTS || '')
       .split(',')
       .map((value) => value.trim())
@@ -220,30 +340,60 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
     SERPER_API_KEY: !!process.env.SERPER_API_KEY,
   };
 
-  const fleet = (process.env.AGENTS || process.env.NEXT_PUBLIC_AGENTS || '')
+  // Fleet status comes from agent heartbeats registered in Redis via
+  // /api/coord/agents/register — never fabricated by index position. Agents
+  // configured but not yet registered are reported as "configured".
+  let registered = [];
+  try {
+    const raw = redis ? await redis.hgetall('agentfi:agents') : {};
+    registered = Object.values(raw || {}).map((entry) => {
+      try {
+        return JSON.parse(entry);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  } catch {
+    registered = [];
+  }
+
+  const configured = (process.env.AGENTS || process.env.NEXT_PUBLIC_AGENTS || '')
     .split(',')
     .map((name) => name.trim())
-    .filter(Boolean)
-    .map((name, index) => ({
+    .filter(Boolean);
+
+  const seen = new Set();
+  const fleet = configured.map((name) => {
+    const registration = registered.find((r) => r.agentId === name || r.name === name);
+    seen.add(name);
+    return {
       id: name,
       label: name,
-      status: index < 8 ? 'online' : 'standby',
-    }));
+      status: registration ? registration.status || 'online' : 'configured',
+      registered: !!registration,
+      registeredAt: registration?.registeredAt || null,
+    };
+  });
+  for (const r of registered) {
+    if (seen.has(r.agentId) || seen.has(r.name)) continue;
+    seen.add(r.agentId);
+    fleet.push({
+      id: r.agentId,
+      label: r.name || r.agentId,
+      status: r.status || 'online',
+      registered: true,
+      registeredAt: r.registeredAt || null,
+    });
+  }
 
   const user = await prisma.user.findUnique({ where: { id: req.user.sub } }).catch(() => null);
   const payoutRuntime = payoutRuntimeSnapshot();
-  const earnings = await computeUserEarnings(req.user.sub).catch(() => ({
-    completedCount: 0,
-    perTaskEth: 0,
-    totalEth: 0,
-    incomeEligible: false,
-  }));
+  const earnings = await computeUserEarnings(req.user.sub);
 
   res.json({
     providers: providerFlags,
     providerCount: Object.values(providerFlags).filter(Boolean).length,
-    providerModels: configuredProviderSummary(),
-    requestedProvider: process.env.LLM_PROVIDER || 'auto',
+    llm: llmRuntimeStatus(),
     redis: !!redis,
     queueEnabled: !!taskQueue,
     fleet,
@@ -252,27 +402,64 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
     preferredNetwork: user?.preferredNetwork || 'ethereum',
     earnings,
     payoutRuntime,
+    earnings,
+    earningsRateEth: earningRateEth(),
   });
 });
 
-// Safe provider diagnostics (never exposes keys or headers).
 app.get('/system/diagnostics', authMiddleware, async (req, res) => {
+  let db = 'unknown';
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    db = 'ok';
+  } catch {
+    // Never surface raw database driver errors to clients.
+    db = 'error';
+  }
+
+  const providerFlags = {
+    GROQ_API_KEY: !!process.env.GROQ_API_KEY,
+    GOOGLE_AI_API_KEY: !!process.env.GOOGLE_AI_API_KEY,
+    OPENROUTER_API_KEY: !!process.env.OPENROUTER_API_KEY,
+    ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
+    TOGETHER_API_KEY: !!process.env.TOGETHER_API_KEY,
+    MISTRAL_API_KEY: !!process.env.MISTRAL_API_KEY,
+    CEREBRAS_API_KEY: !!process.env.CEREBRAS_API_KEY,
+    ALCHEMY_API_KEY: !!process.env.ALCHEMY_API_KEY,
+    COINGECKO_API_KEY: !!process.env.COINGECKO_API_KEY,
+    CMC_API_KEY: !!process.env.CMC_API_KEY,
+    TAVILY_API_KEY: !!process.env.TAVILY_API_KEY,
+    SERPER_API_KEY: !!process.env.SERPER_API_KEY,
+  };
+
   res.json({
-    providers: providerDiagnostics(),
-    requestedProvider: process.env.LLM_PROVIDER || 'auto',
-    globalTaskTimeoutMs: getGlobalTaskTimeoutMs(),
-    retryPolicy: getTaskRetryPolicy(),
+    ok: true,
+    time: Date.now(),
+    db,
+    redis: !!redis,
+    queueEnabled: !!taskQueue,
+    llm: llmRuntimeStatus(),
+    providers: providerFlags,
+    providerCount: Object.values(providerFlags).filter(Boolean).length,
+    earningsRateEth: earningRateEth(),
+    // Safe flags only; never API keys or other secrets.
+    env: {
+      NODE_ENV: process.env.NODE_ENV || 'development',
+      PUBLISHER: typeof process.env.RENDER === 'string' ? 'render' : 'self-hosted',
+      hasJwtSecret: !!process.env.JWT_SECRET,
+      hasDatabaseUrl: !!process.env.DATABASE_URL,
+      hasRedisUrl: !!process.env.REDIS_URL,
+    },
   });
 });
 
-app.post('/auth/register', async (req, res) => {
+app.post('/auth/register', registerLimiter, async (req, res) => {
   try {
-    const { username, password } = req.body;
-    const email = typeof req.body.email === 'string' && req.body.email.trim()
-      ? normalizeEmailAddress(req.body.email)
-      : null;
+    const { password } = req.body;
+    const trimmed = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    const email = typeof req.body.email === 'string' && req.body.email.trim() ? req.body.email.trim().toLowerCase() : null;
 
-    const usernameError = validateUsername(username);
+    const usernameError = validateUsername(trimmed);
     if (usernameError) return res.status(400).json({ error: usernameError });
 
     const emailError = validateEmail(email);
@@ -281,7 +468,7 @@ app.post('/auth/register', async (req, res) => {
     const passwordError = validatePassword(password);
     if (passwordError) return res.status(400).json({ error: passwordError });
 
-    const existingUsername = await prisma.user.findUnique({ where: { username: username.trim() } });
+    const existingUsername = await prisma.user.findUnique({ where: { username: trimmed } });
     if (existingUsername) return res.status(400).json({ error: 'Username is already taken.' });
 
     if (email) {
@@ -290,54 +477,52 @@ app.post('/auth/register', async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const verification = email ? await issueEmailVerification(email) : null;
-    const user = await prisma.user.create({
-      data: {
-        username: username.trim(),
-        email,
-        emailVerified: false,
-        emailVerificationToken: verification?.token || null,
-        emailVerificationExpiresAt: verification?.expiresAt || null,
-        passwordHash,
-        role: defaultRole(),
-      },
-    });
-    if (verification?.token) {
-      void sendVerificationEmail({ email, token: verification.token, username: user.username });
-    }
-    const token = signToken({ sub: user.id, username: user.username });
+    const ownerUsername = process.env.SUPER_ADMIN_USERNAME || 'okwedavid';
+    const role = trimmed === ownerUsername ? ROLE_SUPER_ADMIN : defaultRole();
 
-    res.cookie('token', token, authCookieOptions());
+    const normalizedEmail = normalizeEmailAddress(email);
+    const data = {
+      username: trimmed,
+      passwordHash,
+      role,
+    };
+    if (normalizedEmail) {
+      const verificationToken = issueEmailVerificationToken();
+      data.email = normalizedEmail;
+      data.emailVerified = false;
+      data.emailVerificationToken = verificationToken;
+      data.emailVerificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    }
+    const user = await prisma.user.create({ data });
+    const session = await createSessionForUser(user.id);
+    const token = signToken({ sub: user.id, username: user.username, role: user.role, sid: session.id });
+
+    if (normalizedEmail) {
+      const frontendBase = process.env.FRONTEND_BASE_URL
+        || (process.env.FRONTEND_URLS ? process.env.FRONTEND_URLS.split(',')[0].trim() : '')
+        || 'https://agentfinance.onrender.com';
+      void sendVerificationEmail({
+        email: normalizedEmail,
+        username: user.username,
+        token: user.emailVerificationToken,
+        baseUrl: frontendBase,
+      }).catch(() => {});
+    }
+
     res.json({
       ...serializeUser(user, { isNewUser: true }),
       token,
     });
   } catch (error) {
     if (error.code === 'P2002') {
-      return res.status(400).json({ error: 'username taken' });
+      return res.status(400).json({ error: 'That username or email is already in use.' });
     }
     logger.error('register error', error);
     res.status(500).json({ error: 'registration failed' });
   }
 });
 
-app.post('/auth/verify', async (req, res) => {
-  try {
-    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
-    const result = await verifyEmailByToken(token);
-    if (!result.ok) return res.status(400).json({ error: result.error });
-    res.json({ ok: true, email: result.email });
-  } catch (error) {
-    logger.error('email verify error', error);
-    res.status(500).json({ error: 'failed' });
-  }
-});
-
-app.get('/auth/email/provider', authMiddleware, async (req, res) => {
-  res.json(getEmailProviderStatus());
-});
-
-app.post('/auth/login', async (req, res) => {
+app.post('/auth/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -349,8 +534,9 @@ app.post('/auth/login', async (req, res) => {
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ error: 'invalid credentials' });
 
-    const token = signToken({ sub: user.id, username: user.username });
-    res.cookie('token', token, authCookieOptions());
+    const session = await createSessionForUser(user.id);
+    const token = signToken({ sub: user.id, username: user.username, role: user.role, sid: session.id });
+
     res.json({
       ...serializeUser(user, { isNewUser: false }),
       token,
@@ -422,6 +608,123 @@ app.patch('/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+app.post('/auth/logout', authMiddleware, async (req, res) => {
+  try {
+    if (req.sid) {
+      await prisma.authSession.updateMany({
+        where: { id: req.sid, userId: req.user.sub },
+        data: { revoked: true },
+      });
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    logger.error('logout error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.post('/auth/verify', verifyLimiter, async (req, res) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const result = await verifyEmailByToken(token);
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ ok: true, email: result.email });
+  } catch (error) {
+    logger.error('email verify error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.get('/auth/verify', verifyLimiter, async (req, res) => {
+  try {
+    const token = typeof req.query?.token === 'string' ? req.query.token.trim() : '';
+    const result = await verifyEmailByToken(token);
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ ok: true, email: result.email });
+  } catch (error) {
+    logger.error('email verify error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.get('/auth/email/provider', async (req, res) => {
+  res.json(getEmailProviderStatus());
+});
+
+app.delete('/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user.sub } });
+    if (!user) return res.status(404).json({ error: 'user not found' });
+    if (isSuperAdminRole(normalizeRole(user.role))) {
+      return res.status(400).json({ error: 'The owner/super admin account cannot be deleted.' });
+    }
+
+    const taskRows = await prisma.task.findMany({ where: { userId: user.id }, select: { id: true } });
+    const taskIds = taskRows.map((task) => task.id);
+
+    await prisma.$transaction([
+      prisma.authSession.updateMany({ where: { userId: user.id }, data: { revoked: true } }),
+      prisma.message.deleteMany({ where: { taskId: { in: taskIds } } }),
+      prisma.task.deleteMany({ where: { userId: user.id } }),
+      prisma.payout.deleteMany({ where: { userId: user.id } }),
+      prisma.digitalProduct.deleteMany({ where: { userId: user.id } }),
+      prisma.factoryRun.deleteMany({ where: { userId: user.id } }),
+      prisma.user.delete({ where: { id: user.id } }),
+    ]);
+
+    res.json({ ok: true });
+  } catch (error) {
+    logger.error('delete account error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.post('/auth/promote', authMiddleware, requireRole([ROLE_SUPER_ADMIN]), async (req, res) => {
+  try {
+    const targetUsername = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    if (!targetUsername) return res.status(400).json({ error: 'username required' });
+
+    const target = await prisma.user.findUnique({ where: { username: targetUsername } });
+    if (!target) return res.status(404).json({ error: 'user not found' });
+    if (isSuperAdminRole(normalizeRole(target.role))) {
+      return res.status(400).json({ error: 'The super admin account cannot be changed.' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: target.id },
+      data: { role: ROLE_ADMIN },
+    });
+
+    res.json({ ok: true, user: updated });
+  } catch (error) {
+    logger.error('promote error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.post('/auth/demote', authMiddleware, requireRole([ROLE_SUPER_ADMIN]), async (req, res) => {
+  try {
+    const targetUsername = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    if (!targetUsername) return res.status(400).json({ error: 'username required' });
+
+    const target = await prisma.user.findUnique({ where: { username: targetUsername } });
+    if (!target) return res.status(404).json({ error: 'user not found' });
+    if (isSuperAdminRole(normalizeRole(target.role))) {
+      return res.status(400).json({ error: 'The super admin account cannot be changed.' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: target.id },
+      data: { role: defaultRole() },
+    });
+
+    res.json({ ok: true, user: updated });
+  } catch (error) {
+    logger.error('demote error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
 app.post('/auth/wallet', authMiddleware, async (req, res) => {
   try {
     const { walletAddress } = req.body;
@@ -466,12 +769,18 @@ app.post('/auth/wallet', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/tasks', authMiddleware, async (req, res) => {
+app.post('/tasks', authMiddleware, taskCreateLimiter, async (req, res) => {
   try {
-    const { action, agentId } = req.body;
+    const { action } = req.body;
+    const agentId = normalizeAgentTarget(req.body.agentId);
     if (!action || typeof action !== 'string') {
       return res.status(400).json({ error: 'action is required' });
     }
+    if (action.length > MAX_TASK_ACTION_LENGTH) {
+      return res.status(400).json({ error: `Action is too long (max ${MAX_TASK_ACTION_LENGTH} characters).` });
+    }
+
+    await assertTaskCapacity(req.user.sub);
 
     const agentType = classifyAgent(action);
     const task = await prisma.task.create({
@@ -480,7 +789,7 @@ app.post('/tasks', authMiddleware, async (req, res) => {
         action,
         status: 'queued',
         userId: req.user.sub,
-        agentId: agentId || null,
+        agentId,
       },
     });
 
@@ -493,7 +802,7 @@ app.post('/tasks', authMiddleware, async (req, res) => {
     if (taskQueue) {
       await taskQueue.add(
         'processTask',
-        { taskId: task.id, action, userId: req.user.sub, agentId: agentId || null, agentType },
+        { taskId: task.id, action, userId: req.user.sub, agentId },
         {
           attempts: 1,
           removeOnComplete: { count: 100 },
@@ -501,11 +810,18 @@ app.post('/tasks', authMiddleware, async (req, res) => {
         },
       );
     } else {
-      void runTaskInline(task);
+      void executeAgentTask({
+        taskId: task.id,
+        action,
+        userId: req.user.sub,
+        agentId,
+        publish: (type, data) => publish('agentfi:tasks', { type, data }),
+      });
     }
 
     res.json(sanitizeTask(task));
   } catch (error) {
+    if (error?.status) return res.status(error.status).json({ error: error.message });
     logger.error('task create error', error);
     res.status(500).json({ error: 'failed' });
   }
@@ -539,56 +855,43 @@ app.get('/tasks/:id', authMiddleware, async (req, res) => {
 
 app.patch('/tasks/:id', authMiddleware, async (req, res) => {
   try {
+    // Server-authoritative task lifecycle. The client may only archive a task
+    // or cancel it while it is still waiting/running. It can NEVER write
+    // status to completed/failed, nor write a result/completedAt — those are
+    // produced exclusively by executeAgentTask on the server.
     const existing = await prisma.task.findFirst({
       where: { id: req.params.id, userId: req.user.sub },
     });
     if (!existing) return res.status(404).json({ error: 'not found' });
 
     const fields = {};
-    const { status, archived, action: nextAction } = req.body;
+    if (typeof req.body.archived === 'boolean') fields.archived = req.body.archived;
 
-    // Status changes are strictly governed by the lifecycle rules. The client
-    // can NEVER set 'completed' or hand-write a result — earnings are derived
-    // server-side from authoritative completed records only.
-    if (status) {
-      const allowed =
-        status === 'cancelled' && (existing.status === 'queued' || existing.status === 'running' || existing.status === 'retrying');
-      if (!allowed) {
-        return res.status(400).json({ error: 'That status change is not allowed.' });
+    const requestedStatus = req.body.status;
+    if (requestedStatus !== undefined) {
+      const next = String(requestedStatus).toLowerCase();
+      if (next !== 'cancelled') {
+        return res.status(403).json({ error: 'Task status can only be changed to "cancelled" by the client.' });
       }
-      fields.status = status;
-      if (status === 'cancelled') {
-        fields.completedAt = new Date();
-        fields.result = JSON.stringify({ error: 'Task cancelled.', category: 'user_cancelled' });
+      const ACTIVE = new Set(['queued', 'pending', 'running', 'retrying']);
+      if (!ACTIVE.has(existing.status)) {
+        return res.status(409).json({ error: `A ${existing.status} task cannot be cancelled.` });
       }
+      fields.status = 'cancelled';
+      fields.completedAt = new Date();
     }
 
-    if (typeof archived === 'boolean') fields.archived = archived;
-    if (typeof nextAction === 'string' && nextAction.trim()) fields.action = nextAction.trim().slice(0, 1000);
+    if (
+      req.body.result !== undefined ||
+      req.body.completedAt !== undefined ||
+      req.body.startedAt !== undefined ||
+      req.body.duration !== undefined
+    ) {
+      return res.status(403).json({ error: 'Task results are written by the server only.' });
+    }
 
-    const task = await prisma.task.update({
-      where: { id: req.params.id },
-      data: fields,
-    });
-    await publish('agentfi:tasks', { type: 'task:updated', data: sanitizeTask(task) });
-    res.json(sanitizeTask(task));
-  } catch (error) {
-    logger.error('task patch error', error);
-    res.status(500).json({ error: 'failed' });
-  }
-});
-
-// Retry a failed / timed-out / cancelled task SAFELY: re-queues the SAME task
-// record (no duplicate row, no duplicate earnings) and re-runs it.
-app.post('/tasks/:id/retry', authMiddleware, async (req, res) => {
-  try {
-    const existing = await prisma.task.findFirst({
-      where: { id: req.params.id, userId: req.user.sub },
-    });
-    if (!existing) return res.status(404).json({ error: 'not found' });
-
-    if (!['failed', 'timed_out', 'cancelled'].includes(existing.status)) {
-      return res.status(400).json({ error: 'Only failed, timed out or cancelled tasks can be retried.' });
+    if (Object.keys(fields).length === 0) {
+      return res.status(400).json({ error: 'Nothing to update.' });
     }
 
     const task = await prisma.task.update({
@@ -612,6 +915,69 @@ app.post('/tasks/:id/retry', authMiddleware, async (req, res) => {
       );
     } else {
       void runTaskInline(task);
+    }
+
+    res.json(sanitizeTask(task));
+  } catch (error) {
+    logger.error('task patch error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.post('/tasks/:id/retry', authMiddleware, taskCreateLimiter, async (req, res) => {
+  try {
+    const existing = await prisma.task.findFirst({
+      where: { id: req.params.id, userId: req.user.sub },
+    });
+    if (!existing) return res.status(404).json({ error: 'not found' });
+
+    const RETRYABLE = new Set(['failed', 'cancelled', 'timed_out']);
+    if (!RETRYABLE.has(existing.status)) {
+      return res.status(409).json({ error: `Only failed or cancelled tasks can be retried (current: ${existing.status}).` });
+    }
+
+    if ((existing.retryCount || 0) >= MAX_TASK_RETRIES) {
+      return res.status(429).json({ error: `This task has reached its retry limit (${MAX_TASK_RETRIES}).` });
+    }
+
+    await assertTaskCapacity(req.user.sub);
+
+    // Re-queue the SAME task row: the id, earnings history and result are
+    // preserved/cleared in place — never a duplicate execution record.
+    const task = await prisma.task.update({
+      where: { id: existing.id },
+      data: {
+        status: 'pending',
+        startedAt: null,
+        completedAt: null,
+        duration: null,
+        result: null,
+        archived: false,
+        retryCount: { increment: 1 },
+      },
+    });
+
+    await publish('agentfi:tasks', { type: 'task:updated', data: sanitizeTask(task) });
+
+    const jobData = {
+      taskId: task.id,
+      action: task.action,
+      userId: task.userId,
+      agentId: task.agentId || null,
+    };
+
+    if (taskQueue) {
+      await taskQueue.add('processTask', jobData, {
+        attempts: 1,
+        removeOnComplete: { count: 100 },
+        removeOnFail: { count: 50 },
+      });
+      await publish('agentfi:tasks', { type: 'task:queued', data: sanitizeTask(task) });
+    } else {
+      void executeAgentTask({
+        ...jobData,
+        publish: (type, data) => publish('agentfi:tasks', { type, data }),
+      });
     }
 
     res.json(sanitizeTask(task));
@@ -653,7 +1019,7 @@ app.delete('/tasks/all', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/payouts/prepare', authMiddleware, async (req, res) => {
+app.post('/payouts/prepare', authMiddleware, payoutLimiter, async (req, res) => {
   try {
     const network = normalizeNetwork(req.body.network).id;
     const amount = req.body.amount;
@@ -731,6 +1097,16 @@ app.get('/payouts/:id/status', authMiddleware, async (req, res) => {
   }
 });
 
+app.get('/payouts/admin/queue', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const queue = await listPayoutsForAdmin();
+    res.json(queue);
+  } catch (error) {
+    logger.error('admin payout queue error', error);
+    res.status(500).json({ error: 'Could not load the payout queue.' });
+  }
+});
+
 app.post('/payouts/:id/approve', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const payout = await approvePayout({
@@ -742,24 +1118,37 @@ app.post('/payouts/:id/approve', authMiddleware, requireAdmin, async (req, res) 
     res.json(payout);
   } catch (error) {
     logger.error('approve payout error', error);
-    const message = error.message || 'Could not approve payout.';
-    if (/token|permission|authorized|forbidden/i.test(message)) {
-      return res.status(403).json({ error: message });
-    }
-    return res.status(400).json({ error: message });
+    const message = typeof error?._raw === 'string' ? `The transaction could not be broadcast: ${error.message}` : (error.message || 'Could not approve payout.');
+    const status = error.status || 400;
+    res.status(status).json({ error: message });
+  }
+});
+
+app.post('/payouts/:id/reject', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const payout = await rejectPayout({
+      payoutId: req.params.id,
+      userId: req.user.sub,
+      actorRole: req.userRole,
+      reason: req.body?.reason,
+    });
+    res.json(payout);
+  } catch (error) {
+    logger.error('reject payout error', error);
+    const status = error.status || 400;
+    res.status(status).json({ error: error.message || 'Could not reject payout.' });
   }
 });
 
 app.use('/analytics', analyticsRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/wallet', walletRouter);
-app.use('/api/tasks/replay', replayRouter);
 app.use('/auth/oauth', oauthRouter);
 
 try {
   const factoryRouter = (await import('./routes/factory.js')).default;
-  app.use('/api/factory', factoryRouter);
-  app.use('/factory', factoryRouter);
+  app.use('/api/factory', factoryLimiter, factoryRouter);
+  app.use('/factory', factoryLimiter, factoryRouter);
   logger.info('Factory router mounted at /api/factory');
 } catch (error) {
   logger.warn(`Factory router not found: ${error.message}`);
@@ -767,7 +1156,7 @@ try {
 
 try {
   const coordinatorRouter = (await import('./routes/coordinator.js')).default;
-  app.use('/api/coord', coordinatorRouter);
+  app.use('/api/coord', factoryLimiter, coordinatorRouter);
 } catch (error) {
   logger.warn(`Coordinator router not found: ${error.message}`);
 }
@@ -783,7 +1172,8 @@ try {
   const dispatchRouter = typeof dispatchFactory === 'function'
     ? dispatchFactory({ redis })
     : (dispatchFactory.default || dispatchFactory);
-  if (dispatchRouter) app.use('/api/dispatch', dispatchRouter);
+  // authMiddleware runs first so the limiter can key on the resolved user id.
+  if (dispatchRouter) app.use('/api/dispatch', authMiddleware, dispatchLimiter, dispatchRouter);
 } catch (error) {
   logger.warn(`Dispatch router failed: ${error.message}`);
 }
@@ -799,8 +1189,10 @@ try {
 
 app.use(errorHandler);
 
-if (redis) {
-  const subscriber = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
+let subscriber = null;
+
+if (REDIS_URL) {
+  subscriber = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 
   subscriber.subscribe('agentfi:tasks', 'agentfi:agents', (error, count) => {
     if (error) logger.error(`Redis subscribe error: ${error.message}`);
@@ -808,25 +1200,136 @@ if (redis) {
   });
 
   subscriber.on('message', (channel, message) => {
+    // Deliver task events ONLY to sockets authenticated as the owning user;
+    // fleet/factories events are broadcast to authenticated sockets.
+    let scope = null;
+    try {
+      const parsed = JSON.parse(message);
+      if (channel === 'agentfi:tasks') {
+        scope = parsed?.data?.userId || null;
+      }
+    } catch {
+      return;
+    }
     wss.clients.forEach((client) => {
-      if (client.readyState === 1) client.send(message);
+      if (client.readyState !== 1 || !client.userId) return;
+      if (scope && client.userId !== scope) return;
+      try {
+        client.send(message);
+      } catch {
+        /* socket is closing; ignore */
+      }
     });
   });
 }
 
+const WS_AUTH_TIMEOUT_MS = 10000;
+const WS_HEARTBEAT_INTERVAL_MS = 30000;
+const MAX_WS_PER_USER = 3;
+
 wss.on('connection', (ws, req) => {
   logger.info(`WebSocket client connected from ${req.socket.remoteAddress}`);
+
+  // Unauthenticated sockets get a short window to present a session JWT in
+  // their FIRST message ({ type: 'auth', token }). The token never travels in
+  // the query string.
+  ws.isAuthenticated = false;
+  ws.isAlive = true;
+  ws.userId = null;
+
+  const authTimer = setTimeout(() => {
+    if (!ws.isAuthenticated) ws.close(4001, 'Authentication required');
+  }, WS_AUTH_TIMEOUT_MS);
+
+  ws.on('pong', () => { ws.isAlive = true; });
+
+  ws.on('message', (buffer) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(buffer.toString());
+    } catch {
+      return;
+    }
+    if (!ws.isAuthenticated) {
+      if (parsed?.type === 'auth' && typeof parsed.token === 'string') {
+        resolveUserFromToken(parsed.token)
+          .then((user) => {
+            if (!user) return ws.close(4001, 'Authentication failed');
+            let count = 0;
+            for (const client of wss.clients) {
+              if (client.userId === user.id) count += 1;
+            }
+            if (count >= MAX_WS_PER_USER) {
+              return ws.close(4002, 'Too many connections');
+            }
+            ws.userId = user.id;
+            ws.isAuthenticated = true;
+            clearTimeout(authTimer);
+            ws.send(JSON.stringify({ type: 'auth:ok' }));
+          })
+          .catch(() => ws.close(4001, 'Authentication failed'));
+      }
+      return;
+    }
+    // Authenticated clients may send ping/pong keepalives; other messages are
+    // ignored (control plane is server-driven).
+    if (parsed?.type === 'pong') ws.isAlive = true;
+  });
+
   ws.on('error', (error) => logger.error(`WS error: ${error.message}`));
   ws.on('close', () => logger.info('WebSocket client disconnected'));
 });
 
+const heartbeatInterval = setInterval(() => {
+  wss.clients.forEach((client) => {
+    if (client.isAlive === false) return client.terminate();
+    client.isAlive = false;
+    try {
+      client.ping();
+    } catch {
+      /* socket is closing; ignore */
+    }
+  });
+}, WS_HEARTBEAT_INTERVAL_MS);
+heartbeatInterval.unref?.();
+
 const PORT = process.env.PORT || 4000;
 
 // Bootstrap admin role from server-side env config (never from the client).
-bootstrapAdmins().catch((error) => logger.error(`Admin bootstrap failed: ${error.message}`));
+bootstrapRun().catch((error) => logger.error(`Admin bootstrap failed: ${error.message}`));
 
 server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Redis: ${redis ? 'connected' : 'disabled'}`);
   logger.info(`Queue: ${taskQueue ? 'enabled' : 'inline mode'}`);
 });
+
+// Graceful shutdown: stop accepting connections, drain the HTTP server, close
+// WebSocket clients, then release Redis / BullMQ / Prisma resources.
+function shutdown(signal) {
+  logger.info(`Received ${signal}; shutting down gracefully`);
+  clearInterval(heartbeatInterval);
+
+  const forceExit = setTimeout(() => {
+    logger.warn('Graceful shutdown timed out; forcing exit');
+    process.exit(1);
+  }, 15000);
+  forceExit.unref();
+
+  server.close(() => {
+    (async () => {
+      wss.clients.forEach((client) => client.terminate());
+      try { if (subscriber) await subscriber.quit(); } catch { /* noop */ }
+      try { if (redis && typeof redis.quit === 'function') await redis.quit(); } catch { /* noop */ }
+      try { if (taskQueue && typeof taskQueue.close === 'function') await taskQueue.close(); } catch { /* noop */ }
+      try { await prisma.$disconnect(); } catch { /* noop */ }
+      logger.info('Shutdown complete');
+      process.exit(0);
+    })();
+  });
+
+  // Do not let keep-alive HTTP connections stall shutdown.
+  if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

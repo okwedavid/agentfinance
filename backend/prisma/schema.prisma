@@ -31,8 +31,12 @@ model User {
   id            String   @id @default(cuid())
   username      String   @unique
   email         String?  @unique
+  emailVerified Boolean  @default(false)
+  emailVerificationToken String? @unique
+  emailVerificationExpiresAt DateTime?
+  oauthId       String?  @unique
   passwordHash  String
-  role          String   @default("USER") // USER | ADMIN, server-authoritative
+  role          String   @default("USER") // USER | ADMIN | SUPER_ADMIN, server-authoritative
   displayName   String?
   bio           String?
   walletAddress String?
@@ -42,6 +46,20 @@ model User {
   emailVerificationToken String? @unique
   emailVerificationExpiresAt DateTime?
   createdAt     DateTime @default(now())
+  sessions      AuthSession[]
+  tasks         Task[]
+  payouts       Payout[]
+  digitalProducts DigitalProduct[]
+}
+
+model AuthSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Task {
@@ -56,11 +74,15 @@ model Task {
   duration    Int?
   result      String?
   archived    Boolean   @default(false)
+  retryCount  Int       @default(0)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   Agent    Agent?    @relation(fields: [agentId], references: [id])
+  User     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages Message[]
+
+  @@index([userId])
 }
 
 model Message {
@@ -121,6 +143,7 @@ model TokenUsage {
 model Payout {
   id               String   @id @default(cuid())
   userId           String
+  user             User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   taskId           String?
   network          String
   assetSymbol      String
@@ -138,6 +161,7 @@ model Payout {
   approvedAt       DateTime?
   broadcastAt      DateTime?
   confirmedAt      DateTime?
+  rejectedAt       DateTime?
   updatedAt        DateTime @updatedAt
 }
 
@@ -166,6 +190,7 @@ model DigitalProduct {
   manifest          Json?
   ecommerce         Json?    // publish results {gumroad, shopify, etsy...}
   userId            String?
+  user              User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }

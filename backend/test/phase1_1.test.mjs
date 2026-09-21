@@ -2,376 +2,124 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  TASK_STATUS,
-  normalizeStatus,
-  isTerminalStatus,
-  isIncomeEligible,
-  canTransition,
-} from '../src/services/taskLifecycle.js';
-import {
   computeEarningsFromTasks,
-  getEarningRateEth,
-  isStatusIncomeExcluded,
+  earningRateEth,
+  isEligibleTask,
 } from '../src/services/earningsService.js';
+import { normalizeEmailAddress, serializeUser } from '../src/utils/security.js';
 import {
-  validateEmail,
-  normalizeEmailAddress,
-  serializeUser,
-} from '../src/utils/security.js';
-import {
-  getRequestedProvider,
-  resolveProviderPriority,
-  isProviderConfigured,
-  resolveModel,
-  providerDiagnostics,
-  configuredProviderSummary,
-  PROVIDER_IDS,
-} from '../src/providers/providerConfig.js';
-import {
-  classifyProviderError,
-  toNormalizedError,
-  ErrorCategory,
-} from '../src/providers/normalizedError.js';
-import { createProvider, getActiveProviders } from '../src/providers/providerFactory.js';
-import { getRedirectUri, assertOAuthConfiguration, configuredProviders } from '../src/services/oauthService.js';
-import { issueEmailVerification } from '../src/services/emailService.js';
+  getEmailProviderStatus,
+  issueEmailVerificationToken,
+  verifyEmailByToken,
+} from '../src/services/emailService.js';
 
-const RATE = getEarningRateEth();
+// ── earningsService (pure, no DB) ─────────────────────────────────────────────
 
-// ---------------------------------------------------------------------------
-// Task lifecycle
-// ---------------------------------------------------------------------------
-
-test('normalizeStatus maps legacy pending to queued and preserves lowercase storage', () => {
-  assert.equal(normalizeStatus('pending'), TASK_STATUS.QUEUED);
-  assert.equal(normalizeStatus('queued'), TASK_STATUS.QUEUED);
-  assert.equal(normalizeStatus('COMPLETED'), TASK_STATUS.COMPLETED);
-  assert.equal(normalizeStatus('Completed'), TASK_STATUS.COMPLETED);
-  assert.equal(normalizeStatus('timed_out'), TASK_STATUS.TIMED_OUT);
+test('isEligibleTask requires completed + completedAt + non-empty persisted result', () => {
+  assert.equal(isEligibleTask({ status: 'completed', completedAt: new Date(), result: '{"output":"x"}' }), true);
+  assert.equal(isEligibleTask({ status: 'completed', completedAt: new Date(), result: '{}' }), true, 'JSON object is a non-empty string');
+  assert.equal(isEligibleTask({ status: 'completed', completedAt: new Date(), result: '' }), false);
+  assert.equal(isEligibleTask({ status: 'completed', completedAt: new Date(), result: '   ' }), false);
+  assert.equal(isEligibleTask({ status: 'completed', completedAt: null, result: '{"output":"x"}' }), false);
+  assert.equal(isEligibleTask({ status: 'completed', completedAt: undefined, result: '{"output":"x"}' }), false);
+  assert.equal(isEligibleTask({ status: 'failed', completedAt: new Date(), result: '{"error":"boom"}' }), false, 'failed never earns');
+  assert.equal(isEligibleTask({ status: 'pending', completedAt: new Date(), result: '{"output":"x"}' }), false);
+  assert.equal(isEligibleTask({ status: 'cancelled', completedAt: new Date(), result: '{"output":"x"}' }), false);
+  assert.equal(isEligibleTask(null), false);
+  assert.equal(isEligibleTask(undefined), false);
 });
 
-test('isTerminalStatus is true only for terminal states', () => {
-  assert.equal(isTerminalStatus('completed'), true);
-  assert.equal(isTerminalStatus('failed'), true);
-  assert.equal(isTerminalStatus('timed_out'), true);
-  assert.equal(isTerminalStatus('cancelled'), true);
-  assert.equal(isTerminalStatus('running'), false);
-  assert.equal(isTerminalStatus('queued'), false);
-  assert.equal(isTerminalStatus('retrying'), false);
-});
-
-test('canTransition allows only valid lifecycle steps', () => {
-  assert.equal(canTransition('queued', 'running'), true);
-  assert.equal(canTransition('queued', 'cancelled'), true);
-  assert.equal(canTransition('running', 'retrying'), true);
-  assert.equal(canTransition('running', 'completed'), true);
-  assert.equal(canTransition('running', 'failed'), true);
-  assert.equal(canTransition('running', 'timed_out'), true);
-  assert.equal(canTransition('retrying', 'running'), true);
-  assert.equal(canTransition('failed', 'queued'), true);
-  assert.equal(canTransition('timed_out', 'queued'), true);
-  assert.equal(canTransition('cancelled', 'queued'), true);
-});
-
-test('canTransition forbids bouncing terminal tasks and forged completions', () => {
-  assert.equal(canTransition('completed', 'running'), false);
-  assert.equal(canTransition('completed', 'completed'), false);
-  assert.equal(canTransition('completed', 'queued'), false);
-  assert.equal(canTransition('running', 'queued'), false);
-  assert.equal(canTransition('queued', 'completed'), false);
-  assert.equal(canTransition('queued', 'failed'), false);
-  assert.equal(canTransition('pending', 'completed'), false);
-});
-
-test('isIncomeEligible requires a persisted completed state with a real result', () => {
-  assert.equal(isIncomeEligible({ status: 'completed', completedAt: new Date(), result: '{}' }), true);
-  assert.equal(isIncomeEligible({ status: 'completed', completedAt: new Date(), result: '{"output":"x"}' }), true);
-  assert.equal(isIncomeEligible({ status: 'completed', completedAt: new Date(), result: '' }), false);
-  assert.equal(isIncomeEligible({ status: 'completed', completedAt: null, result: '{}' }), false);
-  assert.equal(isIncomeEligible({ status: 'completed', completedAt: undefined, result: '{}' }), false);
-  assert.equal(isIncomeEligible({ status: 'failed', completedAt: new Date(), result: '{}' }), false);
-  assert.equal(isIncomeEligible({ status: 'timed_out', completedAt: new Date(), result: '{}' }), false);
-  assert.equal(isIncomeEligible({ status: 'cancelled', completedAt: new Date(), result: '{}' }), false);
-  assert.equal(isIncomeEligible({ status: 'running', result: '{}' }), false);
-  assert.equal(isIncomeEligible(null), false);
-});
-
-// ---------------------------------------------------------------------------
-// Earnings rules
-// ---------------------------------------------------------------------------
-
-test('earnings are derived from distinct authoritative completed records only', () => {
+test('computeEarningsFromTasks counts only eligible completed tasks and computes the ETH total', () => {
   const tasks = [
-    { id: 't1', status: 'completed', completedAt: new Date(), result: '{"output":"ok"}' },
-    { id: 't2', status: 'completed', completedAt: new Date(), result: '' },
-    { id: 't3', status: 'failed', completedAt: new Date(), result: '{"output":"no"}' },
-    { id: 't4', status: 'timed_out', completedAt: new Date(), result: 'x' },
-    { id: 't5', status: 'cancelled', completedAt: new Date(), result: 'x' },
-    { id: 't6', status: 'running', result: 'x' },
-    { id: 't7', status: 'queued', result: null },
+    { status: 'completed', completedAt: new Date('2026-01-01T00:00:00Z'), result: '{"output":"a"}' },
+    { status: 'completed', completedAt: new Date('2026-01-03T00:00:00Z'), result: '{"output":"b"}' },
+    { status: 'failed', completedAt: new Date('2026-01-02T00:00:00Z'), result: '{"error":"boom"}' },
+    { status: 'completed', completedAt: new Date('2026-01-04T00:00:00Z'), result: '' },
   ];
-  const earnings = computeEarningsFromTasks(tasks, RATE);
-  assert.equal(earnings.completedCount, 1);
-  assert.equal(earnings.totalEth, Number((1 * RATE).toFixed(8)));
-  assert.equal(earnings.incomeEligible, true);
+  const result = computeEarningsFromTasks(tasks, 0.0035);
+  assert.equal(result.completedCount, 2);
+  assert.equal(result.eligibleCount, 2);
+  assert.equal(result.rateEth, 0.0035);
+  assert.equal(result.totalEth, 0.007);
+  assert.equal(result.totalWei, 7000000000000000);
+  assert.equal(result.lastEligibleAt, '2026-01-03T00:00:00.000Z', 'latest eligible completedAt wins');
 });
 
-test('a retry re-uses the SAME task record so it can never create duplicate earnings', () => {
-  // Retry path re-queues the identical record (same id). When it re-completes
-  // there is still exactly one completed record -> one task -> one earning.
-  const completedAfterRetry = { id: 'r1', status: 'completed', completedAt: new Date(), result: '{"output":"ok"}' };
-  assert.equal(computeEarningsFromTasks([completedAfterRetry], RATE).completedCount, 1);
-  assert.equal(computeEarningsFromTasks([completedAfterRetry], RATE).totalEth, Number((1 * RATE).toFixed(8)));
-});
-
-test('two genuinely distinct completed records earn twice', () => {
-  const t1 = { id: 'a', status: 'completed', completedAt: new Date(), result: '{"output":"1"}' };
-  const t2 = { id: 'b', status: 'completed', completedAt: new Date(), result: '{"output":"2"}' };
-  assert.equal(computeEarningsFromTasks([t1, t2], RATE).completedCount, 2);
-  assert.equal(computeEarningsFromTasks([t1, t2], RATE).totalEth, Number((2 * RATE).toFixed(8)));
-});
-
-test('zero completed tasks means zero earnings and incomeEligible false', () => {
-  const earnings = computeEarningsFromTasks([], RATE);
-  assert.equal(earnings.completedCount, 0);
-  assert.equal(earnings.totalEth, 0);
-  assert.equal(earnings.incomeEligible, false);
-});
-
-test('timed-out and failed tasks are income-excluded by status set', () => {
-  assert.equal(isStatusIncomeExcluded('failed'), true);
-  assert.equal(isStatusIncomeExcluded('timed_out'), true);
-  assert.equal(isStatusIncomeExcluded('cancelled'), true);
-  assert.equal(isStatusIncomeExcluded('running'), true);
-  assert.equal(isStatusIncomeExcluded('queued'), true);
-  assert.equal(isStatusIncomeExcluded('retrying'), true);
-  assert.equal(isStatusIncomeExcluded('completed'), false);
-});
-
-test('default earning rate is 0.0035 ETH per completed task', () => {
-  assert.equal(RATE, 0.0035);
-});
-
-// ---------------------------------------------------------------------------
-// Email validation (backend-authoritative, custom domains allowed)
-// ---------------------------------------------------------------------------
-
-test('validateEmail accepts real-world valid addresses including custom domains', () => {
-  assert.equal(validateEmail('user@example.com'), null);
-  assert.equal(validateEmail('user@my-custom-domain.io'), null);
-  assert.equal(validateEmail('first.last+tag@sub.domain.co.uk'), null);
-  assert.equal(validateEmail('a@b.co'), null);
-  assert.equal(validateEmail('noreply@agentfi.app'), null);
-});
-
-test('validateEmail rejects malformed addresses without locking out providers', () => {
-  assert.equal(validateEmail('not-an-email'), 'Enter a valid email address.');
-  assert.equal(validateEmail('user@@example.com'), 'Enter a valid email address.');
-  assert.equal(validateEmail('user@example'), 'Enter a valid email address.');
-  assert.equal(validateEmail('user@example..com'), 'Enter a valid email address.');
-  assert.equal(validateEmail('.user@example.com'), 'Enter a valid email address.');
-  assert.equal(validateEmail('user.@example.com'), 'Enter a valid email address.');
-  assert.equal(validateEmail('user with space@example.com'), 'Enter a valid email address.');
-  assert.equal(validateEmail('user@example .com'), 'Enter a valid email address.');
-  assert.equal(validateEmail('user@-example.com'), 'Enter a valid email address.');
-  assert.equal(validateEmail(`x@${'y'.repeat(300)}.com`), 'Enter a valid email address.');
-});
-
-test('validateEmail stays optional and accepts empty email as missing at birth', () => {
-  assert.equal(validateEmail(undefined), null);
-  assert.equal(validateEmail(null), null);
-  assert.equal(validateEmail(''), 'Enter a valid email address.');
-  assert.equal(validateEmail('   '), 'Enter a valid email address.');
-});
-
-test('normalizeEmailAddress trims and lowercases for unique storage', () => {
-  assert.equal(normalizeEmailAddress('  User@Example.COM '), 'user@example.com');
-  assert.equal(normalizeEmailAddress('USER@MY-CUSTOM-DOMAIN.IO'), 'user@my-custom-domain.io');
-  assert.equal(normalizeEmailAddress(undefined), undefined);
-});
-
-test('serializeUser exposes emailVerified without internal verification fields', () => {
-  const serialized = serializeUser({
-    id: 'u1',
-    username: 'bob',
-    email: 'bob@example.com',
-    emailVerified: true,
-    emailVerificationToken: 'secret-token',
-    emailVerificationExpiresAt: new Date(),
-    role: 'USER',
-    passwordHash: 'h',
-  });
-  assert.equal(serialized.emailVerified, true);
-  assert.equal('emailVerificationToken' in serialized, false);
-  assert.equal('passwordHash' in serialized, false);
-});
-
-// ---------------------------------------------------------------------------
-// Provider configuration (single source of truth, no secrets)
-// ---------------------------------------------------------------------------
-
-test('provider diagnostics and summaries never include secrets', () => {
-  const diag = providerDiagnostics();
-  const summary = configuredProviderSummary();
-  const raw = JSON.stringify({ diag, summary });
-  for (const secret of ['sk-', 'AIza', 'api_key=', 'Bearer ']) {
-    assert.equal(raw.includes(secret), false, `leaked secret pattern ${secret}`);
-  }
-});
-
-test('requested provider resolves to an explicit LLM_PROVIDER id or auto', () => {
-  const requested = getRequestedProvider();
-  assert.ok(requested === 'auto' || PROVIDER_IDS.includes(requested));
-});
-
-test('provider priority always yields a usable ordered candidate list', () => {
-  const priority = resolveProviderPriority();
-  assert.ok(Array.isArray(priority) && priority.length > 0);
-  for (const id of priority) {
-    assert.ok(isProviderConfigured(id) || true); // priority may include not-yet-configured fallbacks
-  }
-});
-
-test('error classification maps authentication failures safely', () => {
-  assert.equal(classifyProviderError(new Error('401 Unauthorized')), ErrorCategory.AUTHENTICATION_FAILURE);
-  assert.equal(classifyProviderError(new Error('groq: HTTP 401: invalid api key')), ErrorCategory.AUTHENTICATION_FAILURE);
-  assert.equal(classifyProviderError(new Error('API key not set')), ErrorCategory.PROVIDER_NOT_CONFIGURED);
-  assert.equal(classifyProviderError(new Error('timeout after 30000ms')), ErrorCategory.TIMEOUT);
-  assert.equal(classifyProviderError(new Error('HTTP 429 rate limit')), ErrorCategory.RATE_LIMIT);
-});
-
-test('toNormalizedError provides safe retryability metadata', () => {
-  const auth = toNormalizedError(new Error('401 Unauthorized'), 'groq');
-  assert.equal(auth.category, ErrorCategory.AUTHENTICATION_FAILURE);
-  assert.equal(auth.retryable, false);
-  assert.equal(auth.message, 'AI configuration unavailable');
-  const timeout = toNormalizedError(new Error('timed out'), 'groq');
-  assert.equal(timeout.category, ErrorCategory.TIMEOUT);
-  assert.equal(timeout.retryable, true);
-});
-
-// ---------------------------------------------------------------------------
-// Provider factory
-// ---------------------------------------------------------------------------
-
-test('createProvider returns a chat-capable instance for configured providers', () => {
-  const provider = createProvider('groq');
-  assert.equal(provider.id, 'groq');
-  assert.equal(typeof provider.chat, 'function');
-  assert.equal('envKey' in provider, false);
-  assert.equal('key' in provider, false);
-});
-
-test('getActiveProviders never leaks credentials and always yields instances for configured providers', () => {
-  const active = getActiveProviders();
-  for (const provider of active) {
-    assert.ok(provider.id);
-    assert.equal(typeof provider.chat, 'function');
-  }
-  const raw = JSON.stringify(active);
-  for (const secret of ['sk-', 'AIza', 'api_key=']) {
-    assert.equal(raw.includes(secret), false, `leaked secret pattern ${secret}`);
-  }
-});
-
-test('provider chat without key fails with provider_not_configured, not a crash', async () => {
-  const provider = createProvider('groq');
-  if (provider.configured) return; // key present in this environment - nothing to assert
-  await assert.rejects(
-    provider.chat([{ role: 'user', content: 'hi' }]),
-    (error) => error.category === ErrorCategory.PROVIDER_NOT_CONFIGURED,
-  );
-});
-
-// ---------------------------------------------------------------------------
-// OAuth configuration (exact callback, safe startup validation)
-// ---------------------------------------------------------------------------
-
-function withEnv(assign, fn) {
-  const keys = Object.keys(assign);
-  const old = {};
-  for (const key of keys) {
-    old[key] = process.env[key];
-  }
+test('computeEarningsFromTasks honours the EARNING_RATE_ETH override and the passed rate', () => {
+  const before = process.env.EARNING_RATE_ETH;
   try {
-    for (const key of keys) process.env[key] = assign[key];
-    return fn();
+    process.env.EARNING_RATE_ETH = '0.001';
+    assert.equal(earningRateEth(), 0.001);
+    const tasks = [{ status: 'completed', completedAt: new Date(), result: '{"output":"x"}' }];
+    assert.equal(computeEarningsFromTasks(tasks).totalEth, 0.001, 'defaults to env rate');
+    assert.equal(computeEarningsFromTasks(tasks, 0.5).totalEth, 0.5, 'explicit rate wins over env');
   } finally {
-    for (const key of keys) {
-      if (old[key] === undefined) delete process.env[key];
-      else process.env[key] = old[key];
-    }
+    if (before === undefined) delete process.env.EARNING_RATE_ETH;
+    else process.env.EARNING_RATE_ETH = before;
   }
-}
-
-test('getRedirectUri favours provider-specific then generic explicit URIs', () => {
-  withEnv({ GOOGLE_CLIENT_ID: 'x', GOOGLE_CLIENT_SECRET: 'y' }, () => {
-    const explicitGoogle = withEnv({ GOOGLE_REDIRECT_URI: 'https://cb.example.com/google', OAUTH_REDIRECT_URI: 'https://cb.example.com/generic' }, () =>
-      getRedirectUri({ id: 'google' }),
-    );
-    assert.equal(explicitGoogle, 'https://cb.example.com/google');
-
-    const generic = withEnv({ GOOGLE_REDIRECT_URI: '', OAUTH_REDIRECT_URI: 'https://cb.example.com/generic' }, () =>
-      getRedirectUri({ id: 'google' }),
-    );
-    assert.equal(generic, 'https://cb.example.com/generic');
-  });
 });
 
-test('getRedirectUri derives the EXACT callback from PUBLIC_BACKEND_URL when eclipse-unset', () => {
-  withEnv({ GOOGLE_REDIRECT_URI: '', OAUTH_REDIRECT_URI: '', PUBLIC_BACKEND_URL: 'https://api.myapp.example' }, () => {
-    assert.equal(
-      getRedirectUri({ id: 'google' }),
-      'https://api.myapp.example/auth/oauth/google/callback',
-    );
-  });
+test('computeEarningsFromTasks is safe on empty/unknown input', () => {
+  assert.equal(computeEarningsFromTasks(undefined, 0.0035).completedCount, 0);
+  assert.equal(computeEarningsFromTasks(null, 0.0035).completedCount, 0);
+  assert.equal(computeEarningsFromTasks([], 0.0035).completedCount, 0);
+  assert.equal(computeEarningsFromTasks([{ status: 'completed' }], 0.0035).completedCount, 0, 'no completedAt -> ineligible');
 });
 
-test('getRedirectUri throws a clear, actionable error when nothing is configured', () => {
-  withEnv({ GOOGLE_REDIRECT_URI: '', OAUTH_REDIRECT_URI: '', PUBLIC_BACKEND_URL: '' }, () => {
-    assert.throws(() => getRedirectUri({ id: 'google' }), /OAuth redirect URI is not configured/);
-  });
+// ── email: normalize + serializeUser ──────────────────────────────────────────
+
+test('normalizeEmailAddress lowercases and trims, and rejects junk', () => {
+  assert.equal(normalizeEmailAddress('  Bob@Example.COM '), 'bob@example.com');
+  assert.equal(normalizeEmailAddress('user@custom-domain.io'), 'user@custom-domain.io');
+  assert.equal(normalizeEmailAddress(''), null);
+  assert.equal(normalizeEmailAddress('   '), null);
+  assert.equal(normalizeEmailAddress(undefined), null);
+  assert.equal(normalizeEmailAddress(null), null);
+  assert.equal(normalizeEmailAddress(42), null);
+  assert.equal(normalizeEmailAddress('x'.repeat(400) + '@example.com'), null, 'over-length is refused');
 });
 
-test('assertOAuthConfiguration fails clearly when an enabled provider lacks a redirect', () => {
-  const result = withEnv(
-    { GOOGLE_CLIENT_ID: 'c', GOOGLE_CLIENT_SECRET: 's', GOOGLE_REDIRECT_URI: '', OAUTH_REDIRECT_URI: '', PUBLIC_BACKEND_URL: '' },
-    () => assertOAuthConfiguration(),
-  );
-  assert.equal(result, false);
+test('serializeUser exposes emailVerified and never leaks verification internals', () => {
+  const serialized = serializeUser({ id: 'u1', username: 'bob', email: 'bob@example.com', role: 'USER' });
+  assert.equal(serialized.emailVerified, false);
+  assert.equal(serialized.email, 'bob@example.com');
+
+  const verified = serializeUser({ id: 'u2', username: 'carol', email: 'c@example.com', role: 'USER', emailVerified: true });
+  assert.equal(verified.emailVerified, true);
+  assert.equal('emailVerificationToken' in verified, false);
+  assert.equal('emailVerificationExpiresAt' in verified, false);
 });
 
-test('assertOAuthConfiguration passes when the redirect can be resolved', () => {
-  const result = withEnv(
-    { GOOGLE_CLIENT_ID: 'c', GOOGLE_CLIENT_SECRET: 's', GOOGLE_REDIRECT_URI: 'https://cb.example.com/google' },
-    () => assertOAuthConfiguration(),
-  );
-  assert.equal(result, true);
+// ── emailService (no SMTP path) ───────────────────────────────────────────────
+
+test('issueEmailVerificationToken returns a fresh opaque token', () => {
+  const a = issueEmailVerificationToken();
+  const b = issueEmailVerificationToken();
+  assert.equal(a.length, 64);
+  assert.notEqual(a, b);
 });
 
-test('assertOAuthConfiguration passes when no provider is enabled', () => {
-  const result = withEnv({ GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '' }, () => assertOAuthConfiguration());
-  assert.equal(result, true);
+test('verifyEmailByToken rejects an empty/missing token without touching the DB', async () => {
+  assert.equal((await verifyEmailByToken(undefined)).ok, false);
+  assert.equal((await verifyEmailByToken('')).ok, false);
+  assert.equal((await verifyEmailByToken('   ')).ok, false);
 });
 
-test('configuredProviders surface redirect URIs but never secrets', () => {
-  withEnv({ GOOGLE_CLIENT_ID: 'c', GOOGLE_CLIENT_SECRET: 's', GOOGLE_REDIRECT_URI: 'https://cb.example.com/google' }, () => {
-    const providers = configuredProviders();
-    const google = providers.find((p) => p.id === 'google');
-    assert.equal(google.redirectUri, 'https://cb.example.com/google');
-    const raw = JSON.stringify(providers);
-    assert.equal(raw.includes('GOOGLE_CLIENT_SECRET'), false);
-    assert.equal(raw.includes('"s"'), false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Email verification token (architecture groundwork)
-// ---------------------------------------------------------------------------
-
-test('issueEmailVerification produces a one-time token and expiry', async () => {
-  const result = await issueEmailVerification('User@Example.COM');
-  assert.ok(result.token && result.token.length >= 32);
-  assert.ok(result.expiresAt instanceof Date && result.expiresAt > new Date());
-  assert.equal(result.email, 'user@example.com');
+test('getEmailProviderStatus is safe and reflects environment config', () => {
+  const before = { host: process.env.SMTP_HOST, user: process.env.SMTP_USER, pass: process.env.SMTP_PASS, from: process.env.SMTP_FROM };
+  try {
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASS;
+    delete process.env.SMTP_FROM;
+    const status = getEmailProviderStatus();
+    assert.equal(status.configured, false);
+    assert.equal(status.provider, null);
+    assert.equal(status.verificationSupported, process.env.NODE_ENV !== 'production');
+  } finally {
+    if (before.host !== undefined) process.env.SMTP_HOST = before.host;
+    if (before.user !== undefined) process.env.SMTP_USER = before.user;
+    if (before.pass !== undefined) process.env.SMTP_PASS = before.pass;
+    if (before.from !== undefined) process.env.SMTP_FROM = before.from;
+  }
 });

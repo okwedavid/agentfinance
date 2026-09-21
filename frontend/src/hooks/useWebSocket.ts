@@ -34,11 +34,21 @@ export function useWebSocket({ onEvent }: UseWebSocketOptions = {}) {
       setStatus("connecting");
 
       try {
-        const ws = new WebSocket(`${WS_BASE}?token=${encodeURIComponent(token)}`);
+        // The session JWT is delivered in the FIRST frame of the WebSocket
+        // handshake ({ type: 'auth' }), never in the URL query string, so it
+        // cannot leak into access logs, proxies or browser history.
+        const ws = new WebSocket(WS_BASE);
         wsRef.current = ws;
 
         ws.onopen = () => {
-          if (mounted.current) setStatus("live");
+          if (!mounted.current) return;
+          const token = getToken();
+          if (token) {
+            ws.send(JSON.stringify({ type: "auth", token }));
+            setStatus("live");
+          } else {
+            ws.close();
+          }
         };
 
         ws.onmessage = (event) => {
@@ -52,9 +62,12 @@ export function useWebSocket({ onEvent }: UseWebSocketOptions = {}) {
           }
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           if (!mounted.current) return;
           setStatus("offline");
+          // Auth rejection (4001) and too-many-connections (4002) are terminal
+          // — do not hot-loop the server with re-auth attempts.
+          if (event.code === 4001 || event.code === 4002) return;
           reconnectTimer.current = setTimeout(connect, 4000);
         };
 

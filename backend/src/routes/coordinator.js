@@ -1,37 +1,48 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
-import IORedis from 'ioredis';
+import prisma from '../prismaClient.js';
+import redis from '../redisClient.js';
+import logger from '../utils/logger.js';
+import { authMiddleware, requireAdmin, requireRole, ROLE_ADMIN, ROLE_SUPER_ADMIN } from '../middleware/auth.js';
 
-const prisma = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL,
-    },
-  },
-});
 const router = express.Router();
-const REDIS_URL = process.env.REDIS_URL;
-const redis =
-  REDIS_URL && !REDIS_URL.includes('{{')
-    ? new IORedis(REDIS_URL, { maxRetriesPerRequest: null })
-    : {
-        hgetall: async () => ({}),
-        hset: async () => 0,
-        publish: async () => 0,
-      };
 
-// GET /api/coord/agents
+// Full session authentication on every coordinator endpoint, with the resolved
+// role attached for every caller. Reads are scoped to the authenticated user;
+// mutations (agent registration / dispatch) are additionally restricted to
+// administrators so an anonymous caller cannot write to Redis or impersonate
+// an agent.
+router.use(authMiddleware, requireRole(['USER', ROLE_ADMIN, ROLE_SUPER_ADMIN]));
+
+function isAdmin(req) {
+  return req.userRole === ROLE_ADMIN || req.userRole === ROLE_SUPER_ADMIN;
+}
+
+function safeFail(res, error) {
+  logger.error(`coordinator error: ${error.stack || error.message || error}`);
+  return res.status(500).json({ error: 'Coordinator request failed.' });
+}
+
+// GET /api/coord/agents — fleet registration state (any authenticated user).
 router.get('/agents', async (req, res) => {
   try {
     const agents = await redis.hgetall('agentfi:agents');
-    res.json(Object.values(agents).map(a => JSON.parse(a)));
+    const list = Object.values(agents || {})
+      .map((raw) => {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+    res.json(list);
   } catch (err) {
-    res.status(500).json({ error: 'failed', reason: err.message });
+    return safeFail(res, err);
   }
 });
 
-// POST /api/coord/agents/register
-router.post('/agents/register', async (req, res) => {
+// POST /api/coord/agents/register — agent heartbeat / registration (admin).
+router.post('/agents/register', requireAdmin, async (req, res) => {
   try {
     const { agentId, name, status } = req.body;
     if (!agentId || !name) return res.status(400).json({ error: 'missing fields' });
@@ -39,30 +50,43 @@ router.post('/agents/register', async (req, res) => {
     await redis.publish('agentfi:agents', JSON.stringify({ type: 'agent:update', agentId, payload: { name, status } }));
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: 'failed', reason: err.message });
+    return safeFail(res, err);
   }
 });
 
-// POST /api/coord/dispatch
-router.post('/dispatch', async (req, res) => {
+// POST /api/coord/dispatch — instruct a registered agent (admin).
+router.post('/dispatch', requireAdmin, async (req, res) => {
   try {
     const { agentId, action, payload } = req.body;
     if (!agentId || !action) return res.status(400).json({ error: 'missing fields' });
     await redis.publish('agentfi:coord', JSON.stringify({ type: 'perform:subtask', agentId, payload: { action, ...payload } }));
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: 'failed', reason: err.message });
+    return safeFail(res, err);
   }
 });
 
-// GET /api/coord/summary
+// GET /api/coord/summary — fleet + own task state. Admins may view all tasks.
 router.get('/summary', async (req, res) => {
   try {
     const agents = await redis.hgetall('agentfi:agents');
-    const tasks = await prisma.task.findMany({ orderBy: { createdAt: 'desc' }, take: 100 });
-    res.json({ agents: Object.values(agents).map(a => JSON.parse(a)), tasks });
+    const tasks = await prisma.task.findMany({
+      where: isAdmin(req) ? {} : { userId: req.user.sub },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    res.json({
+      agents: Object.values(agents || {}).map((a) => {
+        try {
+          return JSON.parse(a);
+        } catch {
+          return null;
+        }
+      }).filter(Boolean),
+      tasks,
+    });
   } catch (err) {
-    res.status(500).json({ error: 'failed', reason: err.message });
+    return safeFail(res, err);
   }
 });
 

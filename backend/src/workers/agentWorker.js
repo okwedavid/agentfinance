@@ -1,60 +1,55 @@
 /**
- * agentWorker.js — BullMQ worker for the resilient task lifecycle.
+ * agentWorker.js
+ * BullMQ worker that processes tasks through the reliable agent pipeline.
  *
- * Delegates all execution to agentService.executeTask so the inline and
- * queued paths behave identically (same retries, timeout, terminal states).
- * A task that is already terminal is never re-executed, preventing duplicate
- * completion events and duplicate earnings.
+ * The worker delegates the whole task lifecycle (running/completed/failed,
+ * timeout, safe errors, real-time events) to agentService.executeAgentTask so
+ * the BullMQ path and the inline path behave identically.
+ *
+ * Add/keep in backend/src/index.js:
+ *   import './workers/agentWorker.js';
  */
 import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
-import { executeTask, TASK_STATUS } from '../services/agentService.js';
-import { isTerminalStatus } from '../services/taskLifecycle.js';
-import { classifyAgent } from '../agents/taskClassifier.js';
-import prisma from '../prismaClient.js';
-import logger from '../utils/logger.js';
+import { executeAgentTask } from '../services/agentService.js';
 
 const REDIS_URL = process.env.REDIS_URL;
 
 if (!REDIS_URL || REDIS_URL.includes('{{')) {
-  logger.warn('[Worker] REDIS_URL not configured - agent worker disabled. Set REDIS_URL in the backend environment');
+  console.warn('[Worker] REDIS_URL not configured — agent worker disabled. Tasks run inline.');
 } else {
   const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
+
+  const publish = (type, data) =>
+    connection.publish('agentfi:tasks', JSON.stringify({ type, data }));
 
   const worker = new Worker('agent-tasks', async (job) => {
     const { taskId, action, userId } = job.data;
     logger.info(`work-start id=${taskId} job=${job.id}`);
 
-    const existing = await prisma.task.findUnique({ where: { id: taskId } }).catch(() => null);
-    if (!existing) {
-      logger.warn(`work-skip id=${taskId} reason=not-found`);
-      return;
-    }
-    if (isTerminalStatus(existing.status)) {
-      logger.warn(`work-skip id=${taskId} reason=terminal status=${existing.status}`);
-      return;
-    }
+    // executeAgentTask drives the task to a terminal state and emits the
+    // real-time events. It is intentionally NOT rethrown here: provider-level
+    // retries plus the fallback provider already run inside runAgent while the
+    // task had a pending lifecycle, and rethrowing would trigger a second,
+    // duplicated execution of the same task (a retry storm).
+    const outcome = await executeAgentTask({
+      taskId,
+      action,
+      userId,
+      agentId,
+      walletAddress: null,
+      publish,
+    });
 
-    const agentType = classifyAgent(action || '');
-    const { outcome, incomeEligible } = await executeTask({ taskId, action, userId, agentType, redis: connection });
-
-    if (outcome === 'completed') {
-      logger.info(`work-done id=${taskId} outcome=completed incomeEligible=${incomeEligible}`);
-      return;
-    }
-    // Failed / timed_out / already-terminal are handled inside executeTask.
-    logger.warn(`work-done id=${taskId} outcome=${outcome}`);
+    console.log(`[Worker] Task ${taskId} → ${outcome.status}`);
   }, {
     connection,
     concurrency: 3,
     limiter: { max: 10, duration: 60_000 },
   });
 
-  worker.on('completed', (job) => logger.info(`job-completed id=${job.id}`));
-  worker.on('failed', (job, err) => logger.warn(`job-failed id=${job?.id} error=${err?.message}`));
+  worker.on('completed', job => console.log(`[Worker] Job ${job.id} processed`));
+  worker.on('failed', (job, err) => console.error(`[Worker] Job ${job?.id} failed:`, err.message));
 
-  logger.info('[Worker] Agent worker started.');
+  console.log('[Worker] 🤖 Agent worker started, listening for tasks…');
 }
-
-export { TASK_STATUS };
-export default null;

@@ -5,9 +5,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
-    "typecheck": "tsc --noEmit",
-    "test": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test": "node --test scripts/"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

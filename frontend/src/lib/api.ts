@@ -5,16 +5,16 @@ export const WS_BASE = WS_URL;
 
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('token');
+  return window.sessionStorage.getItem('token');
 }
 
 export function setToken(token: string) {
-  if (typeof window !== 'undefined') localStorage.setItem('token', token);
+  if (typeof window !== 'undefined') window.sessionStorage.setItem('token', token);
 }
 
 export function removeToken() {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem('token');
+  window.sessionStorage.removeItem('token');
 }
 
 export function isLoggedIn(): boolean {
@@ -24,9 +24,42 @@ export function isLoggedIn(): boolean {
 export function logout() {
   removeToken();
   if (typeof window !== 'undefined') {
+    window.sessionStorage.removeItem('agentfi_wallet');
+    window.sessionStorage.removeItem('af_settings');
     localStorage.removeItem('agentfi_wallet');
     localStorage.removeItem('af_settings');
   }
+}
+
+// Server-side logout: revokes the current session so the token cannot be reused
+// even if it is ever exposed.
+export async function logoutSession() {
+  try {
+    await apiFetch('/auth/logout', { method: 'POST' });
+  } catch {
+    // Ignore network errors; local token removal still signs the user out of
+    // this tab.
+  } finally {
+    logout();
+  }
+}
+
+export async function deleteAccount() {
+  return apiFetch('/auth/me', { method: 'DELETE' });
+}
+
+export async function promoteUser(username: string) {
+  return apiFetch('/auth/promote', {
+    method: 'POST',
+    body: JSON.stringify({ username }),
+  });
+}
+
+export async function demoteUser(username: string) {
+  return apiFetch('/auth/demote', {
+    method: 'POST',
+    body: JSON.stringify({ username }),
+  });
 }
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
@@ -112,10 +145,6 @@ export async function patchTask(id: string, patch: Record<string, unknown>) {
   });
 }
 
-/**
- * Safe retry: re-queues the SAME task record so the retry can never create a
- * duplicate row or duplicate earnings.
- */
 export async function retryTask(id: string) {
   return apiFetch(`/tasks/${id}/retry`, { method: 'POST' });
 }
@@ -188,6 +217,29 @@ export async function approvePayout(payoutId: string, approvalToken?: string) {
 
 export async function refreshPayoutStatus(payoutId: string) {
   return apiFetch(`/payouts/${payoutId}/status`);
+}
+
+export async function getAdminPayoutQueue() {
+  const data = await apiFetch('/payouts/admin/queue');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function rejectPayout(payoutId: string, reason?: string) {
+  return apiFetch(`/payouts/${payoutId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function getOAuthProviders() {
+  try {
+    const data = await apiFetch('/auth/oauth/providers');
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.providers)) return data.providers;
+    return [];
+  } catch {
+    return [];
+  }
 }
 
 export async function getAnalyticsHistory(limit = 20, offset = 0) {

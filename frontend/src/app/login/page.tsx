@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
-import { isLoggedIn } from "@/lib/api";
+import { getOAuthProviders, isLoggedIn, API_BASE } from "@/lib/api";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Link from "next/link";
+import OAuthProviderButton, { type OAuthProvider } from "@/components/OAuthProviderButton";
 
 export default function LoginPage() {
   const { login, register } = useAuth();
@@ -20,17 +21,21 @@ export default function LoginPage() {
   const [password, setPass]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
-  const [providers, setProviders] = useState<{ id: string; displayName: string; configured: boolean }[]>([]);
+  const [providers, setProviders] = useState<OAuthProvider[]>([]);
 
   useEffect(() => {
     if (isLoggedIn()) window.location.href = '/dashboard';
   }, []);
 
   useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/auth/oauth/providers`, { credentials: 'include' })
-      .then((res) => res.json().catch(() => null))
-      .then((data) => {
-        if (Array.isArray(data?.providers)) setProviders(data.providers.filter((p: any) => p.configured));
+    getOAuthProviders()
+      .then((data: any[]) => {
+        const list: OAuthProvider[] = Array.isArray(data)
+          ? data.filter((item) => item && typeof item.id === "string")
+          : [];
+        const order = ["google", "facebook", "x"];
+        list.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+        setProviders(list);
       })
       .catch(() => {});
   }, []);
@@ -127,18 +132,16 @@ export default function LoginPage() {
             <>
               <div className="mt-5 flex items-center gap-3 text-[11px] uppercase tracking-[0.2em] text-gray-600">
                 <span className="h-px flex-1 bg-white/[0.06]" />
-                <span>Social login</span>
+                <span>Do you already have an account?</span>
                 <span className="h-px flex-1 bg-white/[0.06]" />
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {providers.map((p) => (
-                  <a
+                  <OAuthProviderButton
                     key={p.id}
-                    href={`${process.env.NEXT_PUBLIC_API_URL || ''}/auth/oauth/${p.id}/start`}
-                    className="rounded-xl border border-white/10 bg-white/[0.03] py-2.5 text-sm text-gray-300 transition hover:bg-white/[0.06] text-center"
-                  >
-                    {p.displayName}
-                  </a>
+                    provider={p}
+                    href={`${API_BASE}/auth/oauth/${p.id}/start`}
+                  />
                 ))}
               </div>
             </>

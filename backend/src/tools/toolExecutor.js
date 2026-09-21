@@ -7,6 +7,13 @@ import logger from '../utils/logger.js';
 
 const CG_BASE = 'https://api.coingecko.com/api/v3';
 
+// Combine an optional outer abort signal (task timeout) with a per-request
+// timeout so no single tool call can hang the whole task.
+function sig(signal, ms) {
+  const t = AbortSignal.timeout(ms);
+  return signal ? AbortSignal.any([signal, t]) : t;
+}
+
 const SYMBOL_MAP = {
   btc: 'bitcoin', eth: 'ethereum', sol: 'solana', bnb: 'binancecoin',
   usdc: 'usd-coin', usdt: 'tether', link: 'chainlink', matic: 'matic-network',
@@ -16,19 +23,19 @@ const SYMBOL_MAP = {
   ldo: 'lido-dao', cvx: 'convex-finance',
 };
 
-async function cgFetch(path) {
+async function cgFetch(path, { signal } = {}) {
   const headers = { Accept: 'application/json' };
   if (process.env.COINGECKO_API_KEY) headers['x-cg-demo-api-key'] = process.env.COINGECKO_API_KEY;
-  const res = await fetch(`${CG_BASE}${path}`, { headers });
+  const res = await fetch(`${CG_BASE}${path}`, { headers, signal });
   if (!res.ok) throw new Error(`CoinGecko ${res.status}: ${path}`);
   return res.json();
 }
 
 // ── Implementations ───────────────────────────────────────────────────────────
 
-async function search_web({ query }) {
+async function search_web({ query }, { signal } = {}) {
   if (!process.env.TAVILY_API_KEY) {
-    return `Web search not available (TAVILY_API_KEY not set in Railway env). Query was: "${query}". Please add TAVILY_API_KEY for live search results.`;
+    return `Web search not available (TAVILY_API_KEY not set in backend env). Query was: "${query}". Please add TAVILY_API_KEY for live search results.`;
   }
   try {
     const res = await fetch('https://api.tavily.com/search', {
@@ -41,6 +48,7 @@ async function search_web({ query }) {
         search_depth: 'basic',
         include_answer: true,
       }),
+      signal: sig(signal, 8000),
     });
     const data = await res.json();
     const sources = (data.results || [])
@@ -54,12 +62,13 @@ async function search_web({ query }) {
   }
 }
 
-async function fetch_crypto_price({ coin_id }) {
+async function fetch_crypto_price({ coin_id }, { signal } = {}) {
   try {
     // Try symbol map first
     const id = SYMBOL_MAP[coin_id?.toLowerCase()] || coin_id?.toLowerCase();
     const data = await cgFetch(
-      `/simple/price?ids=${id}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`
+      `/simple/price?ids=${id}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,
+      { signal },
     );
     const c = data[id];
     if (!c) return `No price data for "${coin_id}". Valid IDs: bitcoin, ethereum, solana, chainlink, etc.`;
@@ -76,29 +85,29 @@ async function fetch_crypto_price({ coin_id }) {
   }
 }
 
-async function fetch_market_overview({ category }) {
+async function fetch_market_overview({ category }, { signal } = {}) {
   try {
     switch (category) {
       case 'trending': {
-        const d = await cgFetch('/search/trending');
+        const d = await cgFetch('/search/trending', { signal });
         return d.coins.slice(0, 7).map(c =>
           `${c.item.name} (${c.item.symbol.toUpperCase()}) — rank #${c.item.market_cap_rank || '?'}`
         ).join('\n');
       }
       case 'top_volume': {
-        const d = await cgFetch('/coins/markets?vs_currency=usd&order=volume_desc&per_page=10&page=1');
+        const d = await cgFetch('/coins/markets?vs_currency=usd&order=volume_desc&per_page=10&page=1', { signal });
         return d.map(c =>
           `${c.name}: $${c.current_price.toLocaleString()} | 24h: ${c.price_change_percentage_24h?.toFixed(2)}% | Vol: $${(c.total_volume / 1e6).toFixed(0)}M`
         ).join('\n');
       }
       case 'fear_greed': {
-        const r = await fetch('https://api.alternative.me/fng/?limit=1');
+        const r = await fetch('https://api.alternative.me/fng/?limit=1', { signal: sig(signal, 5000) });
         const d = await r.json();
         const fg = d.data[0];
         return `Fear & Greed Index: ${fg.value}/100 — ${fg.value_classification}\nTimestamp: ${new Date(fg.timestamp * 1000).toISOString()}`;
       }
       case 'defi_tvl': {
-        const r = await fetch('https://api.llama.fi/protocols');
+        const r = await fetch('https://api.llama.fi/protocols', { signal: sig(signal, 8000) });
         const d = await r.json();
         return d.slice(0, 8).map(p =>
           `${p.name}: $${(p.tvl / 1e9).toFixed(2)}B TVL | Category: ${p.category} | Chain: ${p.chain}`
@@ -112,10 +121,10 @@ async function fetch_market_overview({ category }) {
   }
 }
 
-async function check_price_spread({ token_symbol, exchange_a, exchange_b }) {
+async function check_price_spread({ token_symbol, exchange_a, exchange_b }, { signal } = {}) {
   try {
     const id = SYMBOL_MAP[token_symbol.toLowerCase()] || token_symbol.toLowerCase();
-    const data = await cgFetch(`/simple/price?ids=${id}&vs_currencies=usd`);
+    const data = await cgFetch(`/simple/price?ids=${id}&vs_currencies=usd`, { signal });
     const basePrice = data[id]?.usd;
     if (!basePrice) return `No price found for ${token_symbol}`;
 
@@ -145,9 +154,9 @@ async function check_price_spread({ token_symbol, exchange_a, exchange_b }) {
   }
 }
 
-async function fetch_defi_yields({ protocol_name, token_filter }) {
+async function fetch_defi_yields({ protocol_name, token_filter }, { signal } = {}) {
   try {
-    const r = await fetch('https://yields.llama.fi/pools');
+    const r = await fetch('https://yields.llama.fi/pools', { signal: sig(signal, 8000) });
     const d = await r.json();
     let pools = (d.data || [])
       .filter(p => p.project?.toLowerCase().includes(protocol_name.toLowerCase()))
@@ -262,7 +271,7 @@ async function prepare_wallet_transaction({ action, token, amount, recipient_add
   });
 }
 
-async function check_wallet_balance({ wallet_address, tokens = ['ETH'] }) {
+async function check_wallet_balance({ wallet_address, tokens = ['ETH'] }, { signal } = {}) {
   if (!wallet_address?.startsWith('0x')) return 'Invalid address — must start with 0x';
 
   if (process.env.ALCHEMY_API_KEY) {
@@ -271,6 +280,7 @@ async function check_wallet_balance({ wallet_address, tokens = ['ETH'] }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [wallet_address, 'latest'] }),
+        signal: sig(signal, 8000),
       });
       const d = await r.json();
       const ethWei = parseInt(d.result, 16);
@@ -303,14 +313,15 @@ const TOOLS = {
   check_wallet_balance,
 };
 
-export async function executeTool(name, input) {
+export async function executeTool(name, input, opts = {}) {
   logger.info(`[Tool] Executing: ${name}`);
   const fn = TOOLS[name];
   if (!fn) {
     return `Unknown tool: "${name}". Available tools: ${Object.keys(TOOLS).join(', ')}`;
   }
   try {
-    const result = await fn(input || {});
+    const context = { signal: opts.signal || null };
+    const result = await fn(input || {}, context);
     return typeof result === 'string' ? result : JSON.stringify(result);
   } catch (err) {
     logger.error(`[Tool] ${name} failed: ${err.message}`);
