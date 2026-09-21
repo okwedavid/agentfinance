@@ -13,8 +13,8 @@
  */
 import prisma from '../prismaClient.js';
 import logger from '../utils/logger.js';
-import runAgent, { DEFAULT_TASK_TIMEOUT_MS } from '../agents/agentRunner.js';
-import { classifyTask } from '../agents/taskClassifier.js';
+import { DEFAULT_TASK_TIMEOUT_MS } from '../agents/agentRunner.js';
+import { executeWithAgent, routeTask } from '../agents/agentRegistry.js';
 import { summariseTaskResult } from '../services/payoutService.js';
 import { ProviderError, safeMessageFor } from '../services/llmProvider.js';
 
@@ -95,8 +95,12 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
   });
 
   const activeWallet = walletAddress || (await resolveActiveWallet(userId || existing.userId));
-  const agentType = classifyTask(action || '').type;
-  logger.info(`[TASK ${taskId}] queued -> running executor=${agentType}`);
+  const routing = routeTask(action || existing.action || '');
+  const agentType = routing.agent;
+  const executorId = routing.executor;
+  logger.info(`[TASK ${taskId}] route agent=${agentType}`);
+  logger.info(`[TASK ${taskId}] executor=${executorId}`);
+  logger.info(`[TASK ${taskId}] queued -> running executor=${executorId}`);
 
   await emit('task:running', {
     id: running.id || taskId,
@@ -106,7 +110,14 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
   });
 
   try {
-    const result = await runAgent({ action, agentType, walletAddress: activeWallet, signal: controller.signal, timeoutMs: taskTimeoutMs });
+    const result = await executeWithAgent({
+      action,
+      agentType,
+      walletAddress: activeWallet,
+      signal: controller.signal,
+      timeoutMs: taskTimeoutMs,
+      taskId,
+    });
     const providerDurationMs = Date.now() - startedAtMs;
     logger.info(`[TASK ${taskId}] provider_response_received provider=${result.provider} model=${result.model || 'unknown'} duration=${providerDurationMs}ms`);
 
@@ -115,7 +126,9 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
       summary: summariseTaskResult(result.output).slice(0, 1200) || '',
       provider: result.provider,
       model: result.model || null,
-      agentType: result.agentType,
+      agent: result.agent || agentType,
+      executor: result.executor || executorId,
+      agentType: result.agent || agentType,
     };
 
     const updated = await prisma.task.update({

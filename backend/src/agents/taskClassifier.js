@@ -67,23 +67,18 @@ Final output MUST include:
     label: 'Content Agent',
     systemPrompt: `You are a Content Agent on AgentFinance. You create high-quality, monetisable crypto and finance content.
 
-GOAL: Produce complete, publish-ready content AND a monetisation plan in one response.
-
+GOAL: Produce complete, publish-ready content.
 Available tools: search_web, fetch_crypto_price, fetch_market_overview, draft_content, find_monetisation_platform
 
-Workflow:
-1. Call search_web to research current market conditions related to the topic
-2. Call fetch_market_overview "trending" for relevant coins to mention
-3. Call draft_content to structure and write the piece
-4. Call find_monetisation_platform to get the publishing strategy
-5. Write the COMPLETE content piece (not a summary)
+Produce the COMPLETE content piece (every word, ready to copy-paste). Do not write summaries or outlines — write the actual content.`,
+  },
 
-Your response MUST include:
-- The FULL content piece (every word, ready to copy-paste)
-- Platform recommendation with pricing
-- Estimated monthly earnings at 3 audience sizes (small/medium/large)
-
-DO NOT write summaries or outlines. Write the actual content.`,
+  general: {
+    type: 'general',
+    label: 'General AI / Analysis Agent',
+    systemPrompt: `You are the General AI / Analysis Agent on AgentFinance.
+You answer questions, explain concepts, summarise text, compare ideas and reason carefully.
+Be accurate, well-structured and concise. If you are unsure, say so instead of guessing.`,
   },
 
   execution: {
@@ -136,37 +131,42 @@ Final format:
   },
 };
 
+// Agent-first routing. Deterministic, capability-first, and extensible:
+// ordering matters (financial execution BEFORE content/research/general so
+// "transfer 0.1 ETH" never hits a chat agent). Rules are keyword based because
+// that is the existing mechanism; they are kept small, explicit and ordered.
 const ROUTING = [
-  { re: /send|transfer|pay\s|withdraw|sweep|execute.*trade|swap.*token|move.*fund/i, type: 'execution' },
-  { re: /wallet.*balance|how much.*wallet|check.*balance/i, type: 'execution' },
-  { re: /arbitrage?|price.*diff|spread.*exchange|cross.*exchange/i, type: 'trading' },
-  { re: /yield|apy|apr|liquidity.*pool|farm|stake|lend.*earn|defi.*earn|passive.*income/i, type: 'trading' },
-  { re: /\btrade\b|\btrading\b|long|short|entry.*price|position.*size/i, type: 'trading' },
-  { re: /write|article|newsletter|thread|blog|publish|essay|report|content.*creat/i, type: 'content' },
-  { re: /research|find.*best|analyse|analyze|compare.*exchange|what.*opportunit/i, type: 'research' },
-  { re: /earn|make.*money|generate.*income|profit|return|income.*crypto/i, type: 'research' },
+  // Financial / on-chain execution (prepare-only, never auto-broadcast).
+  { re: /send|transfer|pay\s|withdraw|sweep|execute.*trade|swap.*token|move.*fund|wallet.*balance|how much.*wallet|check.*balance|route.*earning/i, type: 'execution' },
+  // Content creation.
+  { re: /write|create|draft|post|tweet|thread|article|blog|newsletter|youtube|copy|publish|rewrite|announcement|content/i, type: 'content' },
+  // Trading setups (existing agent, preserved but not part of the active trio).
+  { re: /arbitrag|price.*diff|spread.*exchange|cross.*exchange|\btrade\b|\btrading\b|entry.*price|position.*size|stop.loss/i, type: 'trading' },
+  // Current-data research (yields/APY/DeFi lookups + explicit research verbs).
+  { re: /research|analyse|analyze|investigat|find.*best|best.*opportunit|compare|current|today|latest|trend|market|yield|apy|apr|defi|liquidity.*pool|farm|stake|lend.*earn|earning.*strateg/i, type: 'research' },
 ];
 
 export function classifyTask(prompt) {
-  if (!prompt) return AGENT_CONFIGS.coordinator;
+  if (!prompt) return AGENT_CONFIGS.general;
   for (const { re, type } of ROUTING) {
     if (re.test(prompt)) return AGENT_CONFIGS[type];
   }
-  return AGENT_CONFIGS.coordinator;
+  // Questions/explain/summarise/plain prompts default to the general agent.
+  return AGENT_CONFIGS.general;
 }
 
 export function getAgentConfig(type) {
-  return AGENT_CONFIGS[type] || AGENT_CONFIGS.coordinator;
+  return AGENT_CONFIGS[type] || AGENT_CONFIGS.general;
 }
 
 export { AGENT_CONFIGS };
 
-/** Lightweight agent-type classifier used across worker + runner. */
+/** Lightweight agent-type classifier (same decision as classifyTask, no prompt lookup). */
 export function classifyAgent(action = '') {
   const text = String(action).toLowerCase();
-  if (/(trade|arbitrage|swap|buy|sell|yield|apy|liquidity|stake)/.test(text)) return 'trading';
-  if (/(write|newsletter|article|thread|content|youtube|tweet)/.test(text)) return 'content';
-  if (/(send|transfer|route|sweep|wallet|balance|gas)/.test(text)) return 'execution';
-  if (/(research|find|analyse|analyze|best|top|yield|market|investigat)/.test(text)) return 'research';
-  return 'coordinator';
+  if (/(send|transfer|withdraw|sweep|wallet|balance|route|gas)/.test(text)) return 'execution';
+  if (/(write|create|draft|post|tweet|thread|article|blog|newsletter|youtube|copy|rewrite|announcement|content)/.test(text)) return 'content';
+  if (/(arbitrag|trade|trading|spread|entry|position|stop.loss)/.test(text)) return 'trading';
+  if (/(research|analyse|analyze|investigat|find|compare|current|today|latest|market|yield|apy|apr|defi|liquidity|farm|stake|opportunit)/.test(text)) return 'research';
+  return 'general';
 }

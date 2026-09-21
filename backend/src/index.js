@@ -42,7 +42,7 @@ import securityHeaders from './middleware/securityHeaders.js';
 import errorHandler from './middleware/errorHandler.js';
 import logger from './utils/logger.js';
 import { executeAgentTask } from './services/agentService.js';
-import { fallbackProvider, primaryProvider, providerModel } from './services/llmProvider.js';
+import { fallbackProvider, getProviderSpec, primaryProvider, providerFallbackOrder, providerIsConfigured, providerModel } from './services/llmProvider.js';
 import { computeUserEarnings, earningRateEth } from './services/earningsService.js';
 import {
   getEmailProviderStatus,
@@ -54,6 +54,7 @@ import {
   DEFAULT_TASK_TIMEOUT_MS as DEFAULT_TIMEOUT_MS,
 } from './agents/agentRunner.js';
 import { classifyAgent } from './agents/taskClassifier.js';
+import { getAgentRuntimeStatus, getProviderRuntimeStatus } from './agents/agentRegistry.js';
 import {
   approvePayout,
   listPayouts,
@@ -319,6 +320,8 @@ app.get('/health', async (req, res) => {
     db,
     redis: redis ? 'configured' : 'disabled',
     llm: llmRuntimeStatus(),
+    providers: getProviderRuntimeStatus(),
+    agents: getAgentRuntimeStatus(),
     agentsConfigured: (process.env.AGENTS || '')
       .split(',')
       .map((value) => value.trim())
@@ -326,10 +329,12 @@ app.get('/health', async (req, res) => {
   });
 });
 
-app.get('/system/runtime', authMiddleware, async (req, res) => {
-  const providerFlags = {
+// Safe, secret-free flag table for runtime/diagnostic endpoints.
+function providerFlagTable() {
+  return {
     GROQ_API_KEY: !!process.env.GROQ_API_KEY,
     GOOGLE_AI_API_KEY: !!process.env.GOOGLE_AI_API_KEY,
+    GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
     OPENROUTER_API_KEY: !!process.env.OPENROUTER_API_KEY,
     ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
     TOGETHER_API_KEY: !!process.env.TOGETHER_API_KEY,
@@ -340,7 +345,17 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
     CMC_API_KEY: !!process.env.CMC_API_KEY,
     TAVILY_API_KEY: !!process.env.TAVILY_API_KEY,
     SERPER_API_KEY: !!process.env.SERPER_API_KEY,
+    modelOverrides: {
+      GROQ_MODEL: process.env.GROQ_MODEL || null,
+      GEMINI_MODEL: process.env.GEMINI_MODEL || null,
+      CEREBRAS_MODEL: process.env.CEREBRAS_MODEL || null,
+    },
+    providerRouting: providerFallbackOrder(),
   };
+}
+
+app.get('/system/runtime', authMiddleware, async (req, res) => {
+  const providerFlags = providerFlagTable();
 
   // Fleet status comes from agent heartbeats registered in Redis via
   // /api/coord/agents/register — never fabricated by index position. Agents
@@ -394,7 +409,9 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
 
   res.json({
     providers: providerFlags,
-    providerCount: Object.values(providerFlags).filter(Boolean).length,
+    providerCount: Object.values(providerFlags).filter((v) => v === true).length,
+    providerRuntime: getProviderRuntimeStatus(),
+    agents: getAgentRuntimeStatus(),
     llm: llmRuntimeStatus(),
     redis: !!redis,
     queueEnabled: !!taskQueue,
@@ -419,20 +436,7 @@ app.get('/system/diagnostics', authMiddleware, async (req, res) => {
     db = 'error';
   }
 
-  const providerFlags = {
-    GROQ_API_KEY: !!process.env.GROQ_API_KEY,
-    GOOGLE_AI_API_KEY: !!process.env.GOOGLE_AI_API_KEY,
-    OPENROUTER_API_KEY: !!process.env.OPENROUTER_API_KEY,
-    ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
-    TOGETHER_API_KEY: !!process.env.TOGETHER_API_KEY,
-    MISTRAL_API_KEY: !!process.env.MISTRAL_API_KEY,
-    CEREBRAS_API_KEY: !!process.env.CEREBRAS_API_KEY,
-    ALCHEMY_API_KEY: !!process.env.ALCHEMY_API_KEY,
-    COINGECKO_API_KEY: !!process.env.COINGECKO_API_KEY,
-    CMC_API_KEY: !!process.env.CMC_API_KEY,
-    TAVILY_API_KEY: !!process.env.TAVILY_API_KEY,
-    SERPER_API_KEY: !!process.env.SERPER_API_KEY,
-  };
+  const providerFlags = providerFlagTable();
 
   res.json({
     ok: true,
@@ -442,7 +446,9 @@ app.get('/system/diagnostics', authMiddleware, async (req, res) => {
     queueEnabled: !!taskQueue,
     llm: llmRuntimeStatus(),
     providers: providerFlags,
-    providerCount: Object.values(providerFlags).filter(Boolean).length,
+    providerRuntime: getProviderRuntimeStatus(),
+    agents: getAgentRuntimeStatus(),
+    providerCount: Object.values(providerFlags).filter((v) => v === true).length,
     earningsRateEth: earningRateEth(),
     // Safe flags only; never API keys or other secrets.
     env: {
@@ -453,6 +459,48 @@ app.get('/system/diagnostics', authMiddleware, async (req, res) => {
       hasRedisUrl: !!process.env.REDIS_URL,
     },
   });
+});
+
+app.get('/system/agents', authMiddleware, async (req, res) => {
+  res.json({ ok: true, ...getAgentRuntimeStatus() });
+});
+
+// Provider health diagnostics. Without ?probe=1 this is configuration-derived
+// (secret-free and instant). With ?probe=1 it performs a MINIMAL, bounded
+// provider check (models-list round-trip) so reachability reflects reality.
+// Values are preserved and never include credentials.
+app.get('/system/providers', authMiddleware, async (req, res) => {
+  const ids = ['groq', 'gemini', 'cerebras'];
+  const out = {};
+  for (const id of ids) {
+    const spec = getProviderSpec(id);
+    const configured = providerIsConfigured(spec);
+    const entry = { provider: id, configured };
+    if (configured && req.query.probe === '1') {
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (spec.format === 'google') headers['x-goog-api-key'] = process.env[spec.keyEnv];
+        else headers.Authorization = `Bearer ${process.env[spec.keyEnv]}`;
+        const url = spec.format === 'google'
+          ? `${spec.baseUrl}/models?key=${encodeURIComponent(process.env[spec.keyEnv])}`
+          : `${spec.baseUrl.replace(/\/chat\/completions$/, '')}/models`;
+        const res2 = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
+        if (res2.ok) {
+          entry.reachability = 'reachable';
+        } else {
+          const category = String(res2.status === 402 ? 'payment_required' : 'unreachable');
+          entry.reachability = category;
+          entry.status = res2.status;
+        }
+      } catch {
+        entry.reachability = 'unreachable';
+      }
+    } else if (configured) {
+      entry.reachability = 'not-probed';
+    }
+    out[id] = entry;
+  }
+  res.json({ ok: true, providers: out, chain: providerFallbackOrder() });
 });
 
 app.post('/auth/register', registerLimiter, async (req, res) => {

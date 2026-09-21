@@ -30,6 +30,7 @@ const AGENT_ICONS: Record<string, string> = {
   content: '✍️',
   execution: '⚡',
   coordinator: '🧠',
+  general: '💬',
 };
 
 export default function AgentActivityFeed({ events }: { events: any[] }) {
