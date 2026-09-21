@@ -53,6 +53,7 @@ import {
 import {
   DEFAULT_TASK_TIMEOUT_MS as DEFAULT_TIMEOUT_MS,
 } from './agents/agentRunner.js';
+import { classifyAgent } from './agents/taskClassifier.js';
 import {
   approvePayout,
   listPayouts,
@@ -558,35 +559,6 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
-app.delete('/auth/me', authMiddleware, async (req, res) => {
-  try {
-    const userId = req.user.sub;
-
-    const deleted = await prisma.$transaction([
-      prisma.message.deleteMany({ where: { task: { userId } } }),
-      prisma.task.deleteMany({ where: { userId } }),
-      prisma.payout.deleteMany({ where: { userId } }),
-      prisma.digitalProduct.deleteMany({ where: { userId } }),
-      prisma.factoryRun.deleteMany({ where: { userId } }),
-      prisma.user.delete({ where: { id: userId } }),
-    ]);
-
-    res.clearCookie('token', authCookieOptions());
-    res.json({
-      ok: true,
-      redirect: '/login',
-      message: 'Account deleted.',
-      deleted: { tasks: deleted[1]?.count ?? 0, user: 1 },
-    });
-  } catch (error) {
-    logger.error('account delete error', error);
-    if (error.code === 'P2025') {
-      return res.status(404).json({ error: 'User not found.' });
-    }
-    res.status(500).json({ error: 'Account deletion failed.' });
-  }
-});
-
 app.patch('/auth/me', authMiddleware, async (req, res) => {
   try {
     const current = await prisma.user.findUnique({ where: { id: req.user.sub } });
@@ -673,7 +645,7 @@ app.delete('/auth/me', authMiddleware, async (req, res) => {
       prisma.user.delete({ where: { id: user.id } }),
     ]);
 
-    res.json({ ok: true });
+    res.json({ ok: true, redirect: '/login' });
   } catch (error) {
     logger.error('delete account error', error);
     res.status(500).json({ error: 'failed' });
@@ -915,7 +887,7 @@ app.patch('/tasks/:id', authMiddleware, async (req, res) => {
         { attempts: 1, removeOnComplete: { count: 100 }, removeOnFail: { count: 50 } },
       );
     } else {
-      void runTaskInline(task);
+      void executeAgentTask({ taskId: task.id, action: task.action, userId: req.user.sub, agentId: task.agentId, publish: (type, data) => publish('agentfi:tasks', { type, data }) });
     }
 
     res.json(sanitizeTask(task));

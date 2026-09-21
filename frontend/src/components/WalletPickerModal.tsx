@@ -114,14 +114,14 @@ export default function WalletPickerModal({ open, onClose }: Props) {
                   {MOBILE_WALLET_INSTALLS.map((wallet) => (
                     <a
                       key={wallet.name}
-                      href={wallet.href}
+                      href={wallet.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/[0.07]"
                     >
                       <span>
                         <span className="block text-sm font-medium text-white">{wallet.name}</span>
-                        <span className="block text-xs text-gray-500">{wallet.blurb}</span>
+                        <span className="block text-xs text-gray-500">{wallet.name}</span>
                       </span>
                       <span className="text-xs text-cyan-300">Install →</span>
                     </a>

@@ -44,9 +44,6 @@ export async function logoutSession() {
   }
 }
 
-  return apiFetch('/auth/me', { method: 'DELETE' });
-}
-
 export async function promoteUser(username: string) {
   return apiFetch('/auth/promote', {
     method: 'POST',
