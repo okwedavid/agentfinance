@@ -42,9 +42,6 @@ model User {
   walletAddress String?
   walletProfiles Json?
   preferredNetwork String? @default("ethereum")
-  emailVerified Boolean   @default(false)
-  emailVerificationToken String? @unique
-  emailVerificationExpiresAt DateTime?
   createdAt     DateTime @default(now())
   sessions      AuthSession[]
   tasks         Task[]

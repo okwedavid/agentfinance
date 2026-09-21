@@ -6,9 +6,9 @@ NIXPACKS_PKGS = "openssl_3_x"
 cmds = ["npm ci", "npx prisma generate --schema=./prisma/schema.prisma"]
 
 [start]
-# Ensure the schema is applied to the database before booting, then start.
-# `prisma migrate deploy` applies tracked, versioned migrations in order.
-# It is non-destructive (never drops data) and idempotent, unlike the legacy
-# `prisma db push --accept-data-loss` (which could drop columns/tables on
-# schema drift).
-cmd = "sh -c 'npx prisma migrate deploy --schema=./prisma/schema.prisma && node src/index.js'"
+# Baseline the existing database (records already-applied migrations via
+# `prisma migrate resolve --applied`; never runs DDL or drops data) BEFORE
+# `prisma migrate deploy` so a db-push-created database does not trigger
+# P3005. Mirrors the `npm start` chain:
+#   node prisma/baseline.js && prisma migrate deploy && node src/index.js
+cmd = "sh -c 'node prisma/baseline.js && npx prisma migrate deploy --schema=./prisma/schema.prisma && node src/index.js'"
