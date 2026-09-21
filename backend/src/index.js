@@ -28,6 +28,7 @@ import {
   validateUsername,
 } from './utils/security.js';
 import oauthRouter from './routes/oauth.js';
+import { assertOAuthConfiguration } from './services/oauthService.js';
 import rateLimit, {
   loginLimiter,
   registerLimiter,
