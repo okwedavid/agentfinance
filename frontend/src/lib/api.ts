@@ -44,7 +44,6 @@ export async function logoutSession() {
   }
 }
 
-export async function deleteAccount() {
   return apiFetch('/auth/me', { method: 'DELETE' });
 }
 
