@@ -17,6 +17,7 @@ import { DEFAULT_TASK_TIMEOUT_MS } from '../agents/agentRunner.js';
 import { executeWithAgent, routeTask } from '../agents/agentRegistry.js';
 import { summariseTaskResult } from '../services/payoutService.js';
 import { ProviderError, safeMessageFor } from '../services/llmProvider.js';
+import { createRewardForTask } from '../services/rewardService.js';
 
 const GENERIC_ERROR_MESSAGE = 'Agent could not complete this task. Please try again.';
 
@@ -151,6 +152,18 @@ export async function executeAgentTask({ taskId, action, userId = null, agentId 
       userId: userId || existing.userId || updated.userId,
     });
     logger.info(`[TASK ${taskId}] result_persisted status=completed duration=${Date.now() - startedAtMs}ms provider=${result.provider}`);
+
+    // Reward economy: book the deterministic task reward. Best-effort and
+    // idempotent by taskId — a booking failure must never fail the task, and
+    // the same task can never earn twice.
+    if (updated.agentId) {
+      createRewardForTask(updated)
+        .then((event) => {
+          if (event) logger.info(`[TASK ${taskId}] reward_booked amount=${event.rewardAmountBnb} BNB version=${event.calculationVersion}`);
+        })
+        .catch((error) => logger.warn(`[TASK ${taskId}] reward booking skipped: ${error.message}`));
+    }
+
     return { status: 'completed' };
   } catch (error) {
     let safeMessage = GENERIC_ERROR_MESSAGE;

@@ -162,6 +162,86 @@ model Payout {
   updatedAt        DateTime @updatedAt
 }
 
+model RewardEvent {
+  id                 String   @id @default(cuid())
+  taskId             String   @unique
+  userId             String
+  agent              String
+  rewardType         String   @default("TASK_COMPLETION")
+  rewardAmountBnb    String
+  rewardAsset        String   @default("BNB")
+  calculationVersion String
+  taskValueMetric    Json?
+  status             String   @default("CREDITED")
+  createdAt          DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model RewardLedger {
+  id                String   @id @default(cuid())
+  userId            String
+  entryType         String
+  direction         String
+  amountBnb         String
+  runningBalanceBnb String
+  referenceId       String?
+  note              String?
+  meta              Json?
+  createdAt         DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model UserRewardBalance {
+  userId         String   @id
+  totalEarnedBnb String   @default("0")
+  settledBnb     String   @default("0")
+  reservedBnb    String   @default("0")
+  updatedAt      DateTime @updatedAt
+}
+
+model RewardPool {
+  id           Int      @id @default(autoincrement())
+  generatedBnb String   @default("0")
+  fundedBnb    String   @default("0")
+  settledBnb   String   @default("0")
+  reservedBnb  String   @default("0")
+  updatedAt    DateTime @updatedAt
+}
+
+model PoolFundingEvent {
+  id          String    @id @default(cuid())
+  sourceType  String
+  amountBnb   String
+  reference   String?
+  status      String    @default("PENDING")
+  simulated   Boolean   @default(false)
+  confirmedBy String?
+  confirmedAt DateTime?
+  note        String?
+  meta        Json?
+  createdAt   DateTime  @default(now())
+}
+
+model SettlementRecord {
+  id         String   @id @default(cuid())
+  payoutId   String   @unique
+  userId     String
+  amountBnb  String
+  status     String   @default("RESERVED")
+  reservedAt DateTime @default(now())
+  releasedAt DateTime?
+  settledAt  DateTime?
+  settledBy  String?
+  txHash     String?
+  note       String?
+
+  @@index([userId])
+}
+
 model DigitalProduct {
   id                String   @id @default(cuid())
   slug              String   @unique

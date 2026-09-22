@@ -37,6 +37,7 @@ const MIGRATIONS_BY_ORDER = [
   '20260915000000_phase0_baseline',
   '20260920000000_phase1_1_email_verification',
   '20260925000000_phase2_security',
+  '20260927000000_phase3_reward_economy',
 ];
 
 const APP_TABLES = ['User', 'Task', 'Agent'];
@@ -106,6 +107,10 @@ async function main() {
     if (await columnExists(prisma, 'Task', 'retryCount')) {
       toResolve.push(MIGRATIONS_BY_ORDER[2]);
       log('probe', 'Task.retryCount present -> phase2 considered applied.');
+    }
+    if (await tableExists(prisma, 'RewardEvent')) {
+      toResolve.push(MIGRATIONS_BY_ORDER[3]);
+      log('probe', 'RewardEvent present -> phase3_reward_economy considered applied.');
     }
 
     await prisma.$disconnect();

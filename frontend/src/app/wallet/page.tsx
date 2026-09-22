@@ -8,6 +8,8 @@ import { BottomNav, PageFooter, TopNav } from "@/components/layout/Nav";
 import {
   approvePayout,
   getPayouts,
+  getRewardBalance,
+  getRewardLedger,
   getRuntimeStatus,
   getTasks,
   getWalletBalanceForNetwork,
@@ -98,6 +100,8 @@ export default function WalletPage() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
   const [routingBusy, setRoutingBusy] = useState(false);
+  const [reward, setReward] = useState<any>(null);
+  const [rewardLedger, setRewardLedger] = useState<any[]>([]);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [connectingWallet, setConnectingWallet] = useState(false);
   const [walletOptions, setWalletOptions] = useState<any[]>([]);
@@ -112,6 +116,11 @@ export default function WalletPage() {
   const refreshRuntime = async () => getRuntimeStatus().then(setRuntime).catch(() => setRuntime(null));
   const refreshTasks = async () => getTasks().then(setTasks).catch(() => setTasks([]));
   const refreshPayoutsList = async () => getPayouts().then(setPayouts).catch(() => setPayouts([]));
+  const refreshReward = async () =>
+    Promise.all([
+      getRewardBalance().then(setReward).catch(() => setReward(null)),
+      getRewardLedger().then(setRewardLedger).catch(() => setRewardLedger([])),
+    ]);
 
   function flash(text: string) {
     setMessage(text);
@@ -121,7 +130,7 @@ export default function WalletPage() {
   const onSocketEvent = useMemo(
     () => async (event: any) => {
       if (event?.type?.startsWith("task:")) {
-        await Promise.all([refreshTasks(), refreshPayoutsList(), refreshRuntime()]);
+        await Promise.all([refreshTasks(), refreshPayoutsList(), refreshRuntime(), refreshReward()]);
       }
     },
     [],
@@ -135,7 +144,7 @@ export default function WalletPage() {
       return;
     }
 
-    void Promise.all([refreshRuntime(), refreshTasks(), refreshPayoutsList(), refresh()]);
+    void Promise.all([refreshRuntime(), refreshTasks(), refreshPayoutsList(), refreshReward(), refresh()]);
   }, []);
 
   useEffect(() => {
@@ -251,21 +260,26 @@ export default function WalletPage() {
       return;
     }
 
+    const available = Number(reward?.availableToWithdrawBnb || 0);
+    if (available <= 0) {
+      flash("Nothing is available to withdraw yet. Rewards are only withdrawable once the reward pool has been funded (see your reward balance card).");
+      return;
+    }
+
     setRoutingBusy(true);
     try {
-      const completedTasks = tasks.filter((task) => task.status === "completed").length;
       const amount = chain.type === "btc"
-        ? Math.max(completedTasks * 0.00001, 0.00001)
-        : Math.max(completedTasks * 0.001, 0.001);
+        ? Math.max(available * 0.00000001, 0.00000001)
+        : Math.min(available, 0.5);
 
-      const action = `Prepare routing plan for ${amount.toFixed(chain.type === "btc" ? 8 : 6)} ${chain.symbol} agent earnings to wallet ${wallet} on ${chain.name}.`;
+      const action = `Prepare routing plan for ${amount.toFixed(chain.type === "btc" ? 8 : 6)} ${chain.symbol} settlement to wallet ${wallet} on ${chain.name}.`;
       await preparePayout({
         action,
         amount: amount.toFixed(chain.type === "btc" ? 8 : 6),
         network: chain.id,
         recipientAddress: wallet,
       });
-      await Promise.all([refreshTasks(), refreshPayoutsList(), refreshRuntime()]);
+      await Promise.all([refreshTasks(), refreshPayoutsList(), refreshRuntime(), refreshReward()]);
       flash("Routing plan prepared.");
     } catch (error: any) {
       flash(error.message || "Could not prepare the routing plan.");
@@ -296,18 +310,8 @@ export default function WalletPage() {
     }
   }
 
-  const completedTasks = tasks.filter((task) => task.status === "completed").length;
-  const pendingEarnings = chain.type === "btc"
-    ? (completedTasks * 0.00001).toFixed(8)
-    : (completedTasks * 0.001).toFixed(6);
-  // Prefer the server-side earnings ledger (/system/runtime.earnings). The
-  // client-side estimate is only a fallback for non-EVM chains or stale data.
-  const serverTotalEth = Number.isFinite(runtime?.earnings?.totalEth) ? runtime.earnings.totalEth : null;
-  const lifetimeEarnings = serverTotalEth !== null && chain.type !== "btc"
-    ? serverTotalEth.toFixed(6)
-    : (chain.type === "btc"
-      ? (completedTasks * 0.000035).toFixed(8)
-      : (completedTasks * 0.0035).toFixed(6));
+  const availableToWithdraw = Number(reward?.availableToWithdrawBnb || 0);
+  const pendingReward = Number(reward?.pendingRewardBnb || 0);
 
   const walletStatus = !wallet
     ? "No wallet connected"
@@ -347,23 +351,28 @@ export default function WalletPage() {
                 <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Selected network</div>
                 <div className="mt-2 text-base font-semibold text-white">{chain.name}</div>
               </div>
-              <div className={`rounded-2xl border p-3 ${parseFloat(pendingEarnings) > 0 ? "border-amber-300/20 bg-amber-400/10" : "border-white/10 bg-white/5"}`}>
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Pending routing</div>
-                <div className={`mt-2 text-lg font-bold ${parseFloat(pendingEarnings) > 0 ? "text-amber-100" : "text-base font-semibold text-white"}`}>
-                  {pendingEarnings} <span className="text-xs font-semibold opacity-70">{chain.symbol}</span>
+              <div className={`rounded-2xl border p-3 ${availableToWithdraw > 0 ? "border-emerald-300/20 bg-emerald-400/10" : "border-white/10 bg-white/5"}`}>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Available to withdraw</div>
+                <div className={`mt-2 text-lg font-bold ${availableToWithdraw > 0 ? "text-emerald-100" : "text-base font-semibold text-white"}`}>
+                  {reward ? reward.availableToWithdrawBnb : "—"} <span className="text-xs font-semibold opacity-70">BNB</span>
                 </div>
-                {parseFloat(pendingEarnings) > 0 && (
-                  <div className="mt-1 flex items-center gap-2 text-[11px] text-amber-200/80">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" />
-                    Awaiting approval
-                  </div>
+                {availableToWithdraw > 0 && (
+                  <div className="mt-1 text-[11px] text-emerald-200/80">Funded, ready for settlement</div>
                 )}
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Lifetime earnings</div>
-                <div className="mt-2 text-base font-semibold text-white">{lifetimeEarnings} {chain.symbol}</div>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Total earned</div>
+                <div className="mt-2 text-base font-semibold text-white">{reward ? reward.totalEarnedBnb : "—"} BNB</div>
+                {pendingReward > 0 && (
+                  <div className="mt-1 text-[11px] text-cyan-200/80">{reward.pendingRewardBnb} pending funding</div>
+                )}
               </div>
             </div>
+            {reward?.simulated && (
+              <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                Demo/simulation mode is enabled on the backend: all reward balances are simulated and payout broadcasting is disabled.
+              </div>
+            )}
           </div>
         </motion.section>
 
@@ -549,8 +558,22 @@ export default function WalletPage() {
             >
               <h2 className="text-lg font-semibold text-white">Prepare routing plan</h2>
               <p className="mt-2 text-sm leading-7 text-slate-400">
-                This creates a real payout plan, links it to your account, and keeps the latest routing status visible across devices.
+                Withdrawals draw only from your funded, settleable reward balance — total earned is capped by the funded share of the reward pool.
               </p>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-2">
+                  <div className="text-[10px] uppercase tracking-[0.15em] text-slate-500">Settleable</div>
+                  <div className="mt-1 text-sm font-semibold text-white">{reward ? reward.availableToWithdrawBnb : "—"}</div>
+                </div>
+                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-2">
+                  <div className="text-[10px] uppercase tracking-[0.15em] text-slate-500">Pending funding</div>
+                  <div className="mt-1 text-sm font-semibold text-white">{reward ? reward.pendingRewardBnb : "—"}</div>
+                </div>
+                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-2">
+                  <div className="text-[10px] uppercase tracking-[0.15em] text-slate-500">Reserved</div>
+                  <div className="mt-1 text-sm font-semibold text-white">{reward ? reward.reservedBnb : "—"}</div>
+                </div>
+              </div>
               <button
                 onClick={routeEarnings}
                 disabled={routingBusy}
@@ -558,7 +581,36 @@ export default function WalletPage() {
               >
                 {routingBusy ? "Preparing routing plan" : `Prepare ${chain.symbol} routing plan`}
               </button>
-              <div className="mt-3 text-xs text-slate-500">Latest plan uses the wallet saved for {chain.name} and the payout signer configured on the backend.</div>
+              <div className="mt-3 text-xs text-slate-500">The reward pool is BNB-denominated. The reserve is captured at prepare time and released if the payout is rejected or fails.</div>
+            </motion.section>
+
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.22, duration: 0.35 }}
+              className="glass rounded-[28px] p-5"
+            >
+              <h2 className="text-lg font-semibold text-white">Reward ledger</h2>
+              <p className="mt-2 text-sm leading-7 text-slate-400">
+                Every reward credit, reservation, release, and settlement on your account.
+              </p>
+              <div className="mt-4 space-y-2">
+                {rewardLedger.length === 0 ? (
+                  <p className="text-sm text-slate-400">No reward ledger entries yet. Completed funded tasks with a persisted result earn rewards.</p>
+                ) : (
+                  rewardLedger.slice(0, 8).map((entry) => (
+                    <div key={entry.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+                      <div>
+                        <div className="text-sm font-medium text-white">{String(entry.entryType || "").replace(/_/g, " ")}</div>
+                        <div className="text-[11px] text-slate-500">{new Date(entry.createdAt).toLocaleString()}</div>
+                      </div>
+                      <div className={`text-sm font-semibold ${entry.direction === "CREDIT" ? "text-emerald-300" : entry.direction === "DEBIT" ? "text-rose-300" : "text-slate-300"}`}>
+                        {entry.direction === "CREDIT" ? "+" : entry.direction === "DEBIT" ? "−" : ""}{entry.amountBnb} BNB
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </motion.section>
 
             <motion.section

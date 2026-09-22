@@ -258,3 +258,98 @@ export async function getAnalyticsSummary() {
     };
   }
 }
+
+// ── Reward economy ───────────────────────────────────────────────────────────
+
+export interface RewardBalance {
+  simulated: boolean;
+  currency: string;
+  totalEarnedBnb: string;
+  pendingRewardBnb: string;
+  availableToWithdrawBnb: string;
+  reservedBnb: string;
+  settledBnb: string;
+  fundingRatio: number;
+  pool: { generatedBnb: string; fundedBnb: string };
+  semanticsNote?: string;
+}
+
+export async function getRewardBalance(): Promise<RewardBalance> {
+  return apiFetch('/api/rewards/balance');
+}
+
+export async function getRewardEvents() {
+  const data = await apiFetch('/api/rewards/events');
+  return data?.events || [];
+}
+
+export async function getRewardLedger() {
+  const data = await apiFetch('/api/rewards/ledger');
+  return data?.entries || [];
+}
+
+export async function getRewardPool() {
+  try {
+    return await apiFetch('/api/rewards/pool');
+  } catch {
+    return null;
+  }
+}
+
+export interface AdminRewardOverview {
+  pool: RewardBalance['pool'] & {
+    settledBnb: string;
+    reservedBnb: string;
+    settleableCapacityBnb: string;
+    unfundedBnb: string;
+    fundingRatio: number;
+    onChainTreasuryBalanceBnb: string | null;
+    semanticsNote?: string;
+  };
+  invariant: {
+    invariantHolds: boolean;
+    mismatchUserIds: string[];
+    pool: unknown;
+    userRows: Array<{ userId: string; ledgerInvariantHolds: boolean }>;
+  };
+  fundingEvents: Array<{
+    id: string;
+    sourceType: string;
+    amountBnb: string;
+    status: string;
+    simulated: boolean;
+    reference: string | null;
+    confirmedAt: string | null;
+    createdAt: string;
+  }>;
+  settlements: Array<{
+    id: string;
+    payoutId: string;
+    userId: string;
+    amountBnb: string;
+    status: string;
+    reservedAt: string;
+  }>;
+  allowedSourceTypes: string[];
+  demoMode: boolean;
+}
+
+export async function getAdminRewardOverview(): Promise<AdminRewardOverview> {
+  return apiFetch('/api/admin/rewards/overview');
+}
+
+export async function fundRewardPool(input: {
+  sourceType: string;
+  amountBnb: string;
+  reference?: string | null;
+  note?: string | null;
+}) {
+  return apiFetch('/api/admin/rewards/fund', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function confirmRewardFunding(eventId: string) {
+  return apiFetch(`/api/admin/rewards/fund/${eventId}/confirm`, { method: 'POST' });
+}

@@ -7,7 +7,10 @@ import { BottomNav, PageFooter, TopNav } from "@/components/layout/Nav";
 import { useAuth } from "@/context/AuthContext";
 import {
   approvePayout,
+  confirmRewardFunding,
+  fundRewardPool,
   getAdminPayoutQueue,
+  getAdminRewardOverview,
   getRuntimeStatus,
   isLoggedIn,
   rejectPayout,
@@ -84,9 +87,19 @@ export default function AdminPage() {
   const [rejecting, setRejecting] = useState<any>(null);
   const [rejectReason, setRejectReason] = useState("");
 
+  const [rewardOverview, setRewardOverview] = useState<any>(null);
+  const [fundingBusy, setFundingBusy] = useState(false);
+  const [fundingSource, setFundingSource] = useState("PLATFORM_REVENUE");
+  const [fundingAmount, setFundingAmount] = useState("");
+
   const load = useCallback(async () => {
     try {
-      setQueue(await getAdminPayoutQueue());
+      const [nextQueue, nextOverview] = await Promise.all([
+        getAdminPayoutQueue(),
+        getAdminRewardOverview().catch(() => null),
+      ]);
+      setQueue(nextQueue);
+      setRewardOverview(nextOverview);
     } catch (error: any) {
       if (error?.status === 403 || error?.status === 401) {
         setMessage("You are not authorized to view the payout queue.");
@@ -145,6 +158,38 @@ export default function AdminPage() {
       await load();
     } catch (error: any) {
       flash(error?.message || "Could not reject this payout.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleFund() {
+    const amount = String(fundingAmount || "").trim();
+    if (!amount || Number(amount) <= 0) {
+      flash("Enter a funding amount greater than zero.");
+      return;
+    }
+    setFundingBusy(true);
+    try {
+      const result = await fundRewardPool({ sourceType: fundingSource, amountBnb: amount });
+      flash(`Funding event ${result?.event?.id ? "created" : "submitted"} — confirm it to credit the pool.`);
+      setFundingAmount("");
+      await load();
+    } catch (error: any) {
+      flash(error?.message || "Could not create the funding event.");
+    } finally {
+      setFundingBusy(false);
+    }
+  }
+
+  async function handleConfirmFunding(eventId: string) {
+    setBusyId(`fund-${eventId}`);
+    try {
+      await confirmRewardFunding(eventId);
+      flash("Funding confirmed and credited to the pool.");
+      await load();
+    } catch (error: any) {
+      flash(error?.message || "Could not confirm funding.");
     } finally {
       setBusyId(null);
     }
@@ -217,6 +262,124 @@ export default function AdminPage() {
           <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
             Your account does not have administrator rights. Requests made to this page are also blocked on the server for your role.
           </div>
+        )}
+
+        {isAdmin && rewardOverview && (
+          <motion.section
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass rounded-[28px] p-5"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Reward pool</h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Generated vs funded vs settleable vs on-chain — never conflated.
+                </p>
+              </div>
+              {rewardOverview.pool?.simulated && (
+                <span className="rounded-full border border-amber-300/20 bg-amber-400/10 px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-amber-100">
+                  Simulated
+                </span>
+              )}
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Generated</div>
+                <div className="mt-2 text-lg font-bold text-white">{rewardOverview.pool.generatedBnb}</div>
+                <div className="text-[11px] text-slate-500">task reward value</div>
+              </div>
+              <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Funded</div>
+                <div className="mt-2 text-lg font-bold text-emerald-100">{rewardOverview.pool.fundedBnb}</div>
+                <div className="text-[11px] text-emerald-200/70">confirmed backing</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Settleable capacity</div>
+                <div className="mt-2 text-lg font-bold text-white">{rewardOverview.pool.settleableCapacityBnb}</div>
+                <div className="text-[11px] text-slate-500">funded − settled − reserved</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Reserved</div>
+                <div className="mt-2 text-lg font-bold text-white">{rewardOverview.pool.reservedBnb}</div>
+                <div className="text-[11px] text-slate-500">pending settlement</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Settled</div>
+                <div className="mt-2 text-lg font-bold text-white">{rewardOverview.pool.settledBnb}</div>
+                <div className="text-[11px] text-slate-500">paid out</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">On-chain treasury</div>
+                <div className="mt-2 text-lg font-bold text-white">{rewardOverview.pool.onChainTreasuryBalanceBnb ?? "—"}</div>
+                <div className="text-[11px] text-slate-500">BNB (live read)</div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Confirm funding</div>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <select
+                  value={fundingSource}
+                  onChange={(event) => setFundingSource(event.target.value)}
+                  className="input-field sm:w-56"
+                >
+                  {(rewardOverview.allowedSourceTypes || []).map((type: string) => (
+                    <option key={type} value={type}>{type.replace(/_/g, " ")}</option>
+                  ))}
+                </select>
+                <input
+                  value={fundingAmount}
+                  onChange={(event) => setFundingAmount(event.target.value)}
+                  placeholder="0.01 BNB"
+                  className="input-field"
+                />
+                <button
+                  onClick={handleFund}
+                  disabled={fundingBusy}
+                  className="rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-60"
+                >
+                  {fundingBusy ? "Creating…" : "Create funding event"}
+                </button>
+              </div>
+              <div className="mt-2 text-xs leading-6 text-slate-500">
+                Creates a PENDING event; confirm it to credit the pool. Accounting only — no on-chain movement. Funding must be backed by real BNB held by the operator.
+              </div>
+
+              {rewardOverview.fundingEvents?.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {rewardOverview.fundingEvents.slice(0, 6).map((event: any) => (
+                    <div key={event.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-white">{event.sourceType.replace(/_/g, " ")}{event.simulated ? " · simulated" : ""}</div>
+                        <div className="truncate text-[11px] text-slate-500">
+                          {event.amountBnb} BNB · {event.status} · {formatTime(event.createdAt)}{event.confirmedAt ? ` · confirmed ${formatTime(event.confirmedAt)}` : ""}
+                        </div>
+                      </div>
+                      {event.status === "PENDING" && (
+                        <button
+                          onClick={() => handleConfirmFunding(event.id)}
+                          disabled={busyId === `fund-${event.id}`}
+                          className="shrink-0 rounded-2xl border border-emerald-300/20 bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/15 disabled:opacity-60"
+                        >
+                          Confirm
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {rewardOverview.invariant && (
+              <div className={`mt-4 flex items-center gap-2 rounded-2xl border px-4 py-3 text-xs ${rewardOverview.invariant.invariantHolds ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100" : "border-rose-300/20 bg-rose-400/10 text-rose-100"}`}>
+                <span className={`h-2 w-2 rounded-full ${rewardOverview.invariant.invariantHolds ? "bg-emerald-300" : "animate-pulse bg-rose-300"}`} />
+                Ledger invariant: credits − debits = totalEarned − settled globally{" "}
+                {rewardOverview.invariant.invariantHolds ? "holds" : `VIOLATED for ${rewardOverview.invariant.mismatchUserIds?.length || 0} user(s)`}
+              </div>
+            )}
+          </motion.section>
         )}
 
         {message && (

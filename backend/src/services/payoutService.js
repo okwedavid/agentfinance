@@ -1,8 +1,23 @@
 import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { Wallet, JsonRpcProvider, parseEther, formatEther } from 'ethers';
 import prisma from '../prismaClient.js';
 import logger from '../utils/logger.js';
 import { ROLE_SUPER_ADMIN, validatePayoutAmount } from '../utils/security.js';
+import {
+  reserveForPayoutTx,
+  settleReservation,
+  releaseReservation,
+  findReservationByPayoutId,
+  demoMode,
+  rewardEconomyEnabled,
+} from '../services/rewardService.js';
+
+const PAYOUT_TX_OPTIONS = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 8000,
+  timeout: 12000,
+};
 
 const NETWORKS = {
   ethereum: {
@@ -67,7 +82,7 @@ export function normalizeNetwork(network) {
   return NETWORKS[key] || NETWORKS.ethereum;
 }
 
-function getEvmRpcUrl(networkId) {
+export function getEvmRpcUrl(networkId) {
   const alchemy = process.env.ALCHEMY_API_KEY;
   const ankrValue = process.env.ANKR_RPC_URL || process.env.ANKR_API_KEY;
   const ankrUrl = ankrValue?.startsWith('http') ? ankrValue : null;
@@ -281,28 +296,59 @@ export async function preparePayoutPlan({
     signer,
   });
 
-  const payout = await prisma.payout.create({
-    data: {
-      userId,
-      taskId,
-      network: network.id,
-      assetSymbol: network.symbol,
-      amount: safeAmount.toFixed(network.kind === 'btc' ? 8 : 6),
-      recipientAddress: resolvedRecipient,
-      treasuryAddress: signer.treasuryAddress,
-      status,
-      approvalToken: randomUUID(),
-      unsignedPayload,
-      summary: '',
-      error: signer.reason || null,
-    },
-  });
+  const payoutFields = {
+    userId,
+    taskId,
+    network: network.id,
+    assetSymbol: network.symbol,
+    amount: safeAmount.toFixed(network.kind === 'btc' ? 8 : 6),
+    recipientAddress: resolvedRecipient,
+    treasuryAddress: signer.treasuryAddress,
+    status,
+    approvalToken: randomUUID(),
+    unsignedPayload,
+    summary: '',
+    error: signer.reason || null,
+  };
 
+  // Reward economy: every new withdrawal is blocked unless the requested
+  // amount can be atomically reserved against the user's settleable balance.
+  // Legacy payouts (pre-economy) have no SettlementRecord and remain fully
+  // approvable without this step.
+  if (rewardEconomyEnabled()) {
+    return createPayoutWithReservation({ userId, payoutFields, signer, network });
+  }
+
+  const payout = await prisma.payout.create({ data: payoutFields });
   const summary = buildPayoutSummary({ payout, signer, network });
   return prisma.payout.update({
     where: { id: payout.id },
     data: { summary },
   });
+}
+
+/**
+ * Create the payout row and its SettlementRecord in one serializable
+ * transaction. If the user lacks enough settleable balance the whole request
+ * aborts (no orphan payout row) with a 422.
+ */
+async function createPayoutWithReservation({ userId, payoutFields, signer, network }) {
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.payout.create({ data: payoutFields });
+
+    await reserveForPayoutTx(tx, {
+      userId,
+      payoutId: created.id,
+      amountBnb: created.amount,
+      note: 'Withdrawal reserved on prepare.',
+    });
+
+    const summary = buildPayoutSummary({ payout: created, signer, network });
+    return tx.payout.update({
+      where: { id: created.id },
+      data: { summary },
+    });
+  }, PAYOUT_TX_OPTIONS);
 }
 
 export function buildEvmPayoutTransaction({ network, recipientAddress, amount }) {
@@ -437,6 +483,14 @@ export async function approvePayout({ payoutId, userId, approvalToken, actorRole
   const payout = await prisma.payout.findUnique({ where: { id: payoutId } });
   if (!payout) throw new Error('Payout not found.');
 
+  // Demo/simulation mode never broadcasts real money.
+  if (demoMode()) {
+    throw Object.assign(
+      new Error('Demo mode is enabled: payout broadcasting is disabled. Withdrawals are simulated only.'),
+      { status: 409 },
+    );
+  }
+
   // Self-approval is blocked for everyone except the super admin: the owner
   // may approve their own withdrawal, but admins cannot approve their own.
   if (payout.userId === userId && actorRole !== ROLE_SUPER_ADMIN) {
@@ -494,7 +548,33 @@ export async function approvePayout({ payoutId, userId, approvalToken, actorRole
     return blocked;
   }
 
-  const broadcasted = await broadcastEvmPayout(payout);
+  let broadcasted;
+  try {
+    broadcasted = await broadcastEvmPayout(payout);
+  } catch (err) {
+    // Preserve the failure instead of leaving an ambiguous pending state.
+    // A settled-once reservation can never re-broadcast because the payout is
+    // now 'failed' (only approval_required payouts can be approved again), so
+    // releasing the reservation is safe: it restores settleable capacity and
+    // never double-settles.
+    await prisma.payout.update({
+      where: { id: payout.id },
+      data: {
+        status: 'failed',
+        error: String(err?.message || 'Broadcast failed.'),
+        approvedAt: new Date(),
+      },
+    });
+    const reservation = await findReservationByPayoutId(payout.id);
+    if (reservation && reservation.status !== 'RELEASED') {
+      await releaseReservation({
+        payoutId: payout.id,
+        note: 'Reservation released after broadcast failure.',
+      });
+    }
+    throw err;
+  }
+
   const next = await prisma.payout.update({
     where: { id: payout.id },
     data: {
@@ -507,6 +587,18 @@ export async function approvePayout({ payoutId, userId, approvalToken, actorRole
       error: null,
     },
   });
+
+  // Reward economy: mark the reservation settled once the treasury actually
+  // broadcasts. Idempotent — a settle that already happened is returned as-is.
+  const reservation = await findReservationByPayoutId(next.id);
+  if (reservation) {
+    await settleReservation({
+      payoutId: next.id,
+      txHash: next.txHash,
+      settledBy: userId,
+      note: 'Withdrawal settled after broadcast.',
+    });
+  }
 
   const summary = buildPayoutSummary({ payout: next, signer: { ...signer, treasuryAddress: broadcasted.treasuryAddress }, network });
   return prisma.payout.update({
@@ -529,7 +621,7 @@ export async function rejectPayout({ payoutId, userId, actorRole, reason }) {
   }
 
   const cleanedReason = cleanText(reason || 'Rejected by an administrator.').slice(0, 500);
-  return prisma.payout.update({
+  const updated = await prisma.payout.update({
     where: { id: payout.id },
     data: {
       status: 'rejected',
@@ -537,6 +629,18 @@ export async function rejectPayout({ payoutId, userId, actorRole, reason }) {
       error: cleanedReason || 'Rejected by an administrator.',
     },
   });
+
+  // Reward economy: a rejected withdrawal must give the settleable capacity
+  // back to the user immediately (idempotent).
+  const reservation = await findReservationByPayoutId(payout.id);
+  if (reservation && reservation.status !== 'RELEASED') {
+    await releaseReservation({
+      payoutId: payout.id,
+      note: 'Reservation released after rejection.',
+    });
+  }
+
+  return updated;
 }
 
 export async function listPayoutsForAdmin() {
@@ -587,6 +691,34 @@ export async function refreshPayoutStatus({ payoutId, userId }) {
     },
   });
 
+  // Reward economy reconciliation on chain result:
+  //   - failed (receipt status 0 => reverted): the treasury got the funds
+  //     back, so release the reservation. Idempotent and never double-counts.
+  //   - confirmed-after-settled mismatch: surfaced to the operator, never a
+  //     silent write.
+  const reservation = await findReservationByPayoutId(payout.id);
+  if (reservation) {
+    if (status === 'failed' && reservation.status !== 'RELEASED') {
+      await releaseReservation({
+        payoutId: payout.id,
+        note: 'Reservation released: broadcast did not confirm on-chain.',
+      });
+    } else if (status === 'confirmed' && reservation.status !== 'SETTLED') {
+      await settleReservation({
+        payoutId: payout.id,
+        txHash: payout.txHash,
+        settledBy: 'system',
+        note: 'Withdrawal settled via receipt confirmation.',
+      });
+    } else if (status === 'failed' && reservation.status === 'SETTLED') {
+      logger.warn(
+        `[rewards] payout ${payout.id} is SETTLED but on-chain receipt is FAILED. ` +
+          'Manual reconciliation required; no automatic reversal performed.',
+        { payoutId: payout.id, txHash: payout.txHash },
+      );
+    }
+  }
+
   const signer = getTreasurySignerStatus(network);
   const summary = buildPayoutSummary({ payout: updated, signer, network });
   return prisma.payout.update({
@@ -635,6 +767,10 @@ export function payoutRuntimeSnapshot() {
   const btc = getTreasurySignerStatus(NETWORKS.bitcoin);
 
   return {
+    rewardEconomy: {
+      enabled: rewardEconomyEnabled(),
+      demoMode: demoMode(),
+    },
     treasury: {
       evmReady: evm.ready,
       btcReady: btc.ready,

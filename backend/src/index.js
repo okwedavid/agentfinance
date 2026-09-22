@@ -44,6 +44,7 @@ import logger from './utils/logger.js';
 import { executeAgentTask } from './services/agentService.js';
 import { fallbackProvider, getProviderSpec, primaryProvider, providerFallbackOrder, providerIsConfigured, providerModel } from './services/llmProvider.js';
 import { computeUserEarnings, earningRateEth } from './services/earningsService.js';
+import { ensureRewardPool } from './services/rewardService.js';
 import {
   getEmailProviderStatus,
   issueEmailVerificationToken,
@@ -1089,7 +1090,21 @@ app.post('/payouts/prepare', authMiddleware, payoutLimiter, async (req, res) => 
     });
   } catch (error) {
     logger.error('prepare payout error', error);
-    res.status(400).json({ error: error.message || 'Could not prepare payout.' });
+
+    // Never leave the helper task stuck in 'running' when preparation fails
+    // (e.g. insufficient settleable balance under the reward economy).
+    try {
+      await prisma.task.update({
+        where: { id: task?.id },
+        data: { status: 'failed', completedAt: new Date(), result: JSON.stringify({ error: 'Payout preparation failed.', failureType: 'payout' }) },
+      }).catch(() => null);
+    } catch { /* best effort */ }
+
+    const status = Number(error?.status) || 400;
+    res.status(status).json({
+      error: error?.message || 'Could not prepare payout.',
+      ...(error?.payload || {}),
+    });
   }
 });
 
@@ -1203,6 +1218,15 @@ try {
   logger.warn(`Sessions router failed: ${error.message}`);
 }
 
+try {
+  const rewardsRoutes = (await import('./routes/rewards.js')).default;
+  const { rewards: rewardsRouter, adminRewards: adminRewardsRouter } = rewardsRoutes();
+  app.use('/api/rewards', rewardsRouter);
+  app.use('/api/admin/rewards', adminRewardsRouter);
+} catch (error) {
+  logger.warn(`Rewards router failed: ${error.message}`);
+}
+
 app.use(errorHandler);
 
 let subscriber = null;
@@ -1313,6 +1337,12 @@ const PORT = process.env.PORT || 4000;
 
 // Bootstrap admin role from server-side env config (never from the client).
 bootstrapRun().catch((error) => logger.error(`Admin bootstrap failed: ${error.message}`));
+
+// Reward economy: materialize the single RewardPool aggregate row at boot so
+// every pool endpoint has a deterministic row to read (lazy by design).
+ensureRewardPool()
+  .then(() => logger.info('[rewards] reward pool ready'))
+  .catch((error) => logger.warn(`[rewards] pool warm-up skipped: ${error.message}`));
 
 server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server running on port ${PORT}`);
