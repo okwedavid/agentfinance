@@ -164,7 +164,8 @@ model Payout {
 
 model RewardEvent {
   id                 String   @id @default(cuid())
-  taskId             String   @unique
+  taskId             String?  @unique
+  computeJobId       String?  @unique
   userId             String
   agent              String
   rewardType         String   @default("TASK_COMPLETION")
@@ -282,4 +283,151 @@ model FactoryRun {
   status        String   @default("running")
   createdAt     DateTime @default(now())
   completedAt   DateTime?
+}
+
+// ── Phase 4: Compute-to-Revenue economy ──────────────────────────────────────
+// Server-managed, additive models. User references are indexed strings (no FK
+// onto User) so account deletion and legacy rows remain untouched.
+
+model ServiceCatalog {
+  id               String   @id @default(cuid())
+  slug             String   @unique
+  name             String
+  description      String?
+  agent            String   @default("general") // research | general | content
+  unitPriceBnb     String   // server-authoritative base price in BNB
+  category         String   @default("compute")
+  enabled          Boolean  @default(true)
+  meta             Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ComputeQuote {
+  id              String         @id @default(cuid())
+  serviceId       String
+  userId          String
+  requestText     String?        // customer compute request (bounded)
+  asset           String         @default("BNB") // BNB | USDT | USDC
+  amountWei       String         // customer price in asset units (1e18)
+  priceBnbWei     String         // normalized BNB price (1e18)
+  priceBnbPerUnit String?        // operator reference BNB-per-unit when asset != BNB
+  platformFeeBnbWei String       // platform gross-margin portion
+  serviceCostBnbWei String       // recorded expected cost portion
+  nonce           String         @unique
+  payloadHash     String
+  status          String         @default("PENDING") // PENDING | PAID | EXPIRED | REFUNDED
+  expiresAt       DateTime
+  createdAt       DateTime       @default(now())
+
+  @@index([userId])
+  @@index([serviceId])
+}
+
+model PaymentIntent {
+  id               String    @id @default(cuid())
+  quoteId          String    @unique
+  asset            String
+  amountWei        String
+  priceBnbPerUnit  String?
+  status           String    @default("PENDING") // PENDING | VERIFIED | SETTLED | FAILED | REFUNDED
+  verificationType String    @default("MANUAL_CERT") // SIMULATED | MANUAL_CERT
+  external         Boolean   @default(true)
+  txHash           String?
+  payerLabel       String?
+  customerId       String?
+  verifiedAt       DateTime?
+  verifiedBy       String?
+  settledAt        DateTime?
+  note             String?
+  createdAt        DateTime  @default(now())
+
+  @@index([quoteId])
+}
+
+model ComputeCustomer {
+  id             String   @id @default(cuid())
+  displayName    String
+  external       Boolean  @default(false)
+  creditsPaid    Int      @default(0)
+  meta           Json?
+  createdAt      DateTime @default(now())
+}
+
+model ComputeJob {
+  id                String   @id @default(cuid())
+  quoteId           String
+  serviceId         String
+  sellerUserId      String   // reward recipient (contributor); payer differs
+  inputText         String?  // compute request executed by the fleet
+  agent             String   @default("general")
+  taskId            String?  // underlying agent Task row (traceability)
+  status            String   @default("DRAFT") // DRAFT | RUNNING | COMPLETED | FAILED | REFUNDED
+  expectedPriceBnbWei String
+  economicValueBnb  String   @default("0") // monetized value; 0 until verified revenue
+  revenueEventId    String?
+  failureReason     String?
+  failureType       String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([sellerUserId])
+  @@index([serviceId])
+  @@index([status])
+}
+
+model ComputeOutput {
+  id         String   @id @default(cuid())
+  jobId      String   @unique
+  resultText String
+  resultHash String   // sha256 hex of canonical output
+  sizeBytes  Int
+  engine     String   @default("agent-fleet")
+  createdAt  DateTime @default(now())
+}
+
+model ComputeCost {
+  id        String   @id @default(cuid())
+  jobId     String
+  costAsset String   @default("BNB")
+  amountWei String
+  costKind  String   @default("INFERENCE") // INFERENCE | COMPUTE | ELECTRICITY | HUMAN
+  source    String   @default("INTERNAL") // INTERNAL | EXTERNAL
+  createdAt DateTime @default(now())
+
+  @@index([jobId])
+}
+
+model RevenueEvent {
+  id               String   @id @default(cuid())
+  jobId            String
+  paymentIntentId  String
+  asset            String
+  amountWei        String
+  bnbEquivalentWei String
+  source           String   @default("COMPUTE_JOB")
+  monetizerType    String   @default("CUSTOMER_PAYMENT")
+  external         Boolean  @default(true)
+  simulated        Boolean  @default(false)
+  status           String   @default("BOOKED")
+  createdAt        DateTime @default(now())
+
+  @@index([jobId])
+  @@unique([paymentIntentId])
+}
+
+model RevenueAllocation {
+  id               String   @id @default(cuid())
+  revenueEventId   String
+  allocationType   String   // REWARD_FUNDING | PLATFORM
+  asset            String
+  amountWei        String
+  bnbEquivalentWei String
+  simulated        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([revenueEventId])
+  @@index([allocationType])
 }
