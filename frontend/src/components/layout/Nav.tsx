@@ -7,6 +7,7 @@ import type { WsStatus } from "@/hooks/useWebSocket";
 
 const NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard", short: "Home", icon: "◈" },
+  { href: "/compute", label: "Compute", short: "Compute", icon: "✱" },
   { href: "/analytics", label: "Analytics", short: "Stats", icon: "△" },
   { href: "/agents", label: "Agents", short: "Fleet", icon: "✦" },
   { href: "/wallet", label: "Wallet", short: "Wallet", icon: "⬡" },
@@ -173,7 +174,13 @@ export function TopNav({ wsStatus = "connecting" }: NavProps) {
 
 export function BottomNav() {
   const pathname = usePathname();
-  const primary = NAV_LINKS.slice(0, 5);
+  const primary = [
+    NAV_LINKS.find((l) => l.href === "/dashboard"),
+    NAV_LINKS.find((l) => l.href === "/compute"),
+    NAV_LINKS.find((l) => l.href === "/analytics"),
+    NAV_LINKS.find((l) => l.href === "/agents"),
+    NAV_LINKS.find((l) => l.href === "/wallet"),
+  ].filter(Boolean) as typeof NAV_LINKS;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-[rgba(4,10,20,0.92)] backdrop-blur-2xl md:hidden safe-bottom">

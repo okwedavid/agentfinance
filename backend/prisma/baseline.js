@@ -38,6 +38,7 @@ const MIGRATIONS_BY_ORDER = [
   '20260920000000_phase1_1_email_verification',
   '20260925000000_phase2_security',
   '20260927000000_phase3_reward_economy',
+  '20260930000000_phase4_compute_economy',
 ];
 
 const APP_TABLES = ['User', 'Task', 'Agent'];
@@ -111,6 +112,10 @@ async function main() {
     if (await tableExists(prisma, 'RewardEvent')) {
       toResolve.push(MIGRATIONS_BY_ORDER[3]);
       log('probe', 'RewardEvent present -> phase3_reward_economy considered applied.');
+    }
+    if (await tableExists(prisma, 'ComputeJob')) {
+      toResolve.push(MIGRATIONS_BY_ORDER[4]);
+      log('probe', 'ComputeJob present -> phase4_compute_economy considered applied.');
     }
 
     await prisma.$disconnect();

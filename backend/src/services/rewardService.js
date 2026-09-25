@@ -44,11 +44,13 @@ export const SOURCE_TYPES = Object.freeze([
   'EXTERNAL_DEPOSIT',
   'TREASURY_ALLOCATION',
   'APPROVED_LOAD',
+  'COMPUTE_REVENUE',
   'OTHER',
 ]);
 
 export const LEDGER_ENTRY = Object.freeze({
   CREDIT_TASK: 'CREDIT_TASK',
+  CREDIT_COMPUTE_JOB: 'CREDIT_COMPUTE_JOB',
   RESERVATION: 'RESERVATION',
   RELEASE_RESERVATION: 'RELEASE_RESERVATION',
   SETTLEMENT: 'SETTLEMENT',
@@ -206,6 +208,136 @@ export async function createRewardForTask(task, { userIdOverride = null } = {}) 
     }
     logger.error('[rewards] createRewardForTask failed', { taskId: task.id, error: error.message });
     // A bookkeeping failure must never fail the task itself.
+    return null;
+  }
+}
+
+// ── Revenue-backed funding + compute job rewards (Phase 4) ───────────────────
+
+/**
+ * Credit the reward pool with verified external compute revenue. MUST run
+ * INSIDE the revenue-booking transaction (revenueService) so the RevenueEvent,
+ * its allocations and the pool funding are atomic. Idempotency is guaranteed by
+ * the caller's RevenueEvent uniqueness check (one funding per revenue event).
+ */
+export async function fundPoolFromRevenueTx(tx, { amountBnb, reference, simulated = false, confirmedBy = null, note = null }) {
+  const amountWei = toUnits(amountBnb);
+  if (amountWei <= 0n) return null;
+
+  const pool = await getPoolInTx(tx);
+  const event = await tx.poolFundingEvent.create({
+    data: {
+      sourceType: 'COMPUTE_REVENUE',
+      amountBnb: fromUnits(amountWei, 8),
+      reference: reference ? String(reference).slice(0, 200) : null,
+      status: 'CONFIRMED',
+      simulated,
+      confirmedBy: confirmedBy || null,
+      confirmedAt: new Date(),
+      note: note ? String(note).slice(0, 500) : 'Revenue-backed compute funding (COMPUTE_REVENUE).',
+      meta: { automatic: true, revenueEventId: reference },
+    },
+  });
+
+  const fundedNext = add(toUnits(pool.fundedBnb || '0'), amountWei);
+  await tx.rewardPool.update({
+    where: { id: POOL_ID },
+    data: { fundedBnb: fromUnits(fundedNext) },
+  });
+
+  await tx.rewardLedger.create({
+    data: {
+      userId: '__pool__',
+      entryType: LEDGER_ENTRY.FUNDING,
+      direction: 'CREDIT',
+      amountBnb: fromUnits(amountWei, 8),
+      runningBalanceBnb: fromUnits(fundedNext, 8),
+      referenceId: reference || event.id,
+      note: 'Revenue-backed pool funding confirmed from compute revenue.',
+    },
+  });
+
+  return event;
+}
+
+/**
+ * Book one deterministic, revenue-backed reward for a monetized compute job.
+ * Idempotent by computeJobId: a compute job can never earn twice. The amount is
+ * the job's REWARD_FUNDING allocation (verified external revenue already in the
+ * pool) — it is never fabricated independently of revenue.
+ */
+export async function createRewardForComputeJob({ job, rewardAmountBnb, meta = null }) {
+  if (!rewardEconomyEnabled()) return null;
+  if (!job || typeof job !== 'object' || !job.id) return null;
+  if (job.status !== 'COMPLETED' || !job.completedAt) return null;
+
+  const amountWei = toUnits(rewardAmountBnb);
+  if (amountWei <= 0n) return null;
+
+  const userId = job.sellerUserId;
+  if (!userId) return null;
+
+  const existing = await prisma.rewardEvent.findUnique({ where: { computeJobId: job.id } }).catch(() => null);
+  if (existing) return existing;
+
+  try {
+    return await runRewardTx(async (tx) => {
+      const [bal, pool] = await Promise.all([
+        tx.userRewardBalance.findUnique({ where: { userId } }),
+        getPoolInTx(tx),
+      ]);
+
+      const newTotalWei = add(toUnits(bal?.totalEarnedBnb || '0'), amountWei);
+      const running = runningBalanceWei({ ...bal, totalEarnedBnb: fromUnits(newTotalWei) });
+
+      const createdEvent = await tx.rewardEvent.create({
+        data: {
+          computeJobId: job.id,
+          userId,
+          agent: job.agent || 'general',
+          rewardType: 'COMPUTE_JOB_REVENUE',
+          rewardAmountBnb: fromUnits(amountWei, 8),
+          rewardAsset: REWARD_ASSET,
+          calculationVersion: String(process.env.COMPUTE_CALC_VERSION || '1.0.0'),
+          taskValueMetric: { jobId: job.id, monetizedRevenueBnb: fromUnits(amountWei, 8), meta },
+          status: 'CREDITED',
+        },
+      });
+      await tx.rewardLedger.create({
+        data: {
+          userId,
+          entryType: LEDGER_ENTRY.CREDIT_COMPUTE_JOB,
+          direction: 'CREDIT',
+          amountBnb: fromUnits(amountWei, 8),
+          runningBalanceBnb: fromUnits(running, 8),
+          referenceId: job.id,
+          note: 'Revenue-backed compute job reward.',
+          meta: { jobId: job.id, agent: job.agent || 'general', version: String(process.env.COMPUTE_CALC_VERSION || '1.0.0') },
+        },
+      });
+      if (bal) {
+        await tx.userRewardBalance.update({
+          where: { userId },
+          data: { totalEarnedBnb: fromUnits(newTotalWei) },
+        });
+      } else {
+        await tx.userRewardBalance.create({
+          data: { userId, totalEarnedBnb: fromUnits(newTotalWei) },
+        });
+      }
+      await tx.rewardPool.update({
+        where: { id: POOL_ID },
+        data: { generatedBnb: fromUnits(add(toUnits(pool.generatedBnb), amountWei)) },
+      });
+
+      return createdEvent;
+    });
+  } catch (error) {
+    const msg = String(error?.message || '');
+    if (/Unique constraint/.test(msg) || /RewardEvent_computeJobId_key/.test(msg)) {
+      return prisma.rewardEvent.findUnique({ where: { computeJobId: job.id } }).catch(() => null);
+    }
+    logger.error('[rewards] createRewardForComputeJob failed', { jobId: job.id, error: error.message });
     return null;
   }
 }

@@ -9,11 +9,14 @@ import {
   approvePayout,
   confirmRewardFunding,
   fundRewardPool,
+  getAdminComputeOverview,
   getAdminPayoutQueue,
   getAdminRewardOverview,
   getRuntimeStatus,
   isLoggedIn,
+  refundComputePayment,
   rejectPayout,
+  verifyComputePayment,
 } from "@/lib/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -92,14 +95,20 @@ export default function AdminPage() {
   const [fundingSource, setFundingSource] = useState("PLATFORM_REVENUE");
   const [fundingAmount, setFundingAmount] = useState("");
 
+  const [computeOverview, setComputeOverview] = useState<any>(null);
+  const [verifyBusyId, setVerifyBusyId] = useState<string | null>(null);
+  const [attestationInput, setAttestationInput] = useState<Record<string, string>>({});
+
   const load = useCallback(async () => {
     try {
-      const [nextQueue, nextOverview] = await Promise.all([
+      const [nextQueue, nextOverview, nextCompute] = await Promise.all([
         getAdminPayoutQueue(),
         getAdminRewardOverview().catch(() => null),
+        getAdminComputeOverview().catch(() => null),
       ]);
       setQueue(nextQueue);
       setRewardOverview(nextOverview);
+      setComputeOverview(nextCompute);
     } catch (error: any) {
       if (error?.status === 403 || error?.status === 401) {
         setMessage("You are not authorized to view the payout queue.");
@@ -121,7 +130,7 @@ export default function AdminPage() {
 
   const onSocketEvent = useMemo(
     () => async (event: any) => {
-      if (event?.type?.startsWith("task:") || event?.type?.startsWith("payout:")) {
+      if (event?.type?.startsWith("task:") || event?.type?.startsWith("payout:") || event?.type?.startsWith("compute:")) {
         await load();
       }
     },
@@ -192,6 +201,37 @@ export default function AdminPage() {
       flash(error?.message || "Could not confirm funding.");
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function handleVerifyPayment(payment: any) {
+    setVerifyBusyId(payment.id);
+    try {
+      const requiresAttestation = payment.verificationType === "MANUAL_CERT";
+      const attestation = requiresAttestation ? (attestationInput[payment.id] || "").trim() : undefined;
+      const result = await verifyComputePayment(payment.id, requiresAttestation ? attestation : undefined);
+      flash(result?.note || "Payment verified and booked as revenue.");
+      if (requiresAttestation) {
+        setAttestationInput((prev) => ({ ...prev, [payment.id]: "" }));
+      }
+      await load();
+    } catch (error: any) {
+      flash(error?.message || "Could not verify this payment.");
+    } finally {
+      setVerifyBusyId(null);
+    }
+  }
+
+  async function handleRefundPayment(payment: any) {
+    setVerifyBusyId(payment.id);
+    try {
+      await refundComputePayment(payment.id, "Refunded from the admin console.");
+      flash("Payment refunded before settlement.");
+      await load();
+    } catch (error: any) {
+      flash(error?.message || "Could not refund this payment.");
+    } finally {
+      setVerifyBusyId(null);
     }
   }
 
@@ -377,6 +417,126 @@ export default function AdminPage() {
                 <span className={`h-2 w-2 rounded-full ${rewardOverview.invariant.invariantHolds ? "bg-emerald-300" : "animate-pulse bg-rose-300"}`} />
                 Ledger invariant: credits − debits = totalEarned − settled globally{" "}
                 {rewardOverview.invariant.invariantHolds ? "holds" : `VIOLATED for ${rewardOverview.invariant.mismatchUserIds?.length || 0} user(s)`}
+              </div>
+            )}
+          </motion.section>
+        )}
+
+        {isAdmin && computeOverview && (
+          <motion.section
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass rounded-[28px] p-5"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Compute revenue economy</h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Real external revenue is never conflated with SIMULATED figures — cost is a cost, never revenue.
+                </p>
+              </div>
+              {computeOverview.demoMode && (
+                <span className="rounded-full border border-amber-300/20 bg-amber-400/10 px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-amber-100">
+                  Demo
+                </span>
+              )}
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Compute jobs</div>
+                <div className="mt-2 text-lg font-bold text-white">{computeOverview.summary.totalJobs}</div>
+                <div className="text-[11px] text-slate-500">{computeOverview.summary.monetizedJobs} monetized</div>
+              </div>
+              <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">REAL revenue</div>
+                <div className="mt-2 text-lg font-bold text-cyan-100">{computeOverview.summary.realRevenueBnb}</div>
+                <div className="text-[11px] text-cyan-200/60">verified external BNB</div>
+              </div>
+              <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">SIMULATED revenue</div>
+                <div className="mt-2 text-lg font-bold text-amber-100">{computeOverview.summary.simulatedRevenueBnb}</div>
+                <div className="text-[11px] text-amber-200/60">demo only</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Compute cost</div>
+                <div className="mt-2 text-lg font-bold text-white">{computeOverview.summary.computeCostBnb}</div>
+                <div className="text-[11px] text-slate-500">{computeOverview.summary.revenueNeverEqualToComputeCost ? "≠ revenue (correct)" : "inspect: equals revenue"}</div>
+              </div>
+              <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Reward funding</div>
+                <div className="mt-2 text-lg font-bold text-emerald-100">{computeOverview.summary.realRewardFundingBnb}</div>
+                <div className="text-[11px] text-slate-500">+{computeOverview.summary.simulatedRewardFundingBnb} simulated</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Platform margin</div>
+                <div className="mt-2 text-lg font-bold text-white">{computeOverview.summary.platformBnb}</div>
+                <div className="text-[11px] text-slate-500">gross</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Compute rewards</div>
+                <div className="mt-2 text-lg font-bold text-white">{computeOverview.summary.computeRewardsBnb}</div>
+                <div className="text-[11px] text-slate-500">revenue-backed</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Revenue events</div>
+                <div className="mt-2 text-lg font-bold text-white">{computeOverview.summary.revenueEvents}</div>
+                <div className="text-[11px] text-slate-500">external only</div>
+              </div>
+            </div>
+
+            {computeOverview.payments?.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {computeOverview.payments.slice(0, 8).map((payment: any) => {
+                  const requiresAttestation = payment.verificationType === "MANUAL_CERT";
+                  return (
+                    <div key={payment.id} className="flex flex-col gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-xs text-slate-500">{shortId(payment.id)}</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${payment.status === "PENDING" ? "border-amber-300/20 bg-amber-400/10 text-amber-100" : payment.status === "VERIFIED" ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100" : "border-white/10 bg-white/5 text-slate-300"}`}>
+                            {payment.status}
+                          </span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${payment.verificationType === "SIMULATED" ? "border-amber-300/20 bg-amber-400/10 text-amber-100" : "border-cyan-300/20 bg-cyan-400/10 text-cyan-100"}`}>
+                            {payment.verificationType}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {(BigInt(payment.amountWei) / 10n ** 18n).toString()} {payment.asset} · {formatTime(payment.createdAt)}
+                        </div>
+                      </div>
+                      {payment.status === "PENDING" && (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          {requiresAttestation && isSuperAdmin && (
+                            <input
+                              value={attestationInput[payment.id] || ""}
+                              onChange={(event) => setAttestationInput((prev) => ({ ...prev, [payment.id]: event.target.value }))}
+                              placeholder="Operator attestation"
+                              className="input-field sm:w-56"
+                            />
+                          )}
+                          {requiresAttestation && !isSuperAdmin && (
+                            <span className="text-[11px] text-slate-500">REAL payments require SUPER_ADMIN attestation</span>
+                          )}
+                          <button
+                            onClick={() => handleVerifyPayment(payment)}
+                            disabled={verifyBusyId === payment.id || (requiresAttestation && !isSuperAdmin)}
+                            className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-400/15 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {verifyBusyId === payment.id ? "Verifying…" : "Verify payment"}
+                          </button>
+                          <button
+                            onClick={() => handleRefundPayment(payment)}
+                            disabled={verifyBusyId === payment.id}
+                            className="rounded-2xl border border-rose-300/20 bg-rose-400/10 px-4 py-2 text-xs font-semibold text-rose-100 transition hover:bg-rose-400/15 disabled:opacity-40"
+                          >
+                            Refund
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </motion.section>

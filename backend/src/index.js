@@ -45,6 +45,7 @@ import { executeAgentTask } from './services/agentService.js';
 import { fallbackProvider, getProviderSpec, primaryProvider, providerFallbackOrder, providerIsConfigured, providerModel } from './services/llmProvider.js';
 import { computeUserEarnings, earningRateEth } from './services/earningsService.js';
 import { ensureRewardPool } from './services/rewardService.js';
+import { ensureComputeServiceCatalog } from './services/compute/catalogService.js';
 import {
   getEmailProviderStatus,
   issueEmailVerificationToken,
@@ -1227,6 +1228,16 @@ try {
   logger.warn(`Rewards router failed: ${error.message}`);
 }
 
+try {
+  const computeRoutes = (await import('./routes/compute.js')).default;
+  const { compute: computeRouter, adminCompute: adminComputeRouter } = computeRoutes();
+  app.use('/api/compute', computeRouter);
+  app.use('/api/admin/compute', adminComputeRouter);
+  logger.info('Compute-to-revenue router mounted at /api/compute');
+} catch (error) {
+  logger.warn(`Compute router failed: ${error.message}`);
+}
+
 app.use(errorHandler);
 
 let subscriber = null;
@@ -1234,18 +1245,18 @@ let subscriber = null;
 if (REDIS_URL) {
   subscriber = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 
-  subscriber.subscribe('agentfi:tasks', 'agentfi:agents', (error, count) => {
+  subscriber.subscribe('agentfi:tasks', 'agentfi:agents', 'agentfi:compute', (error, count) => {
     if (error) logger.error(`Redis subscribe error: ${error.message}`);
     else logger.info(`Subscribed to ${count} Redis channels`);
   });
 
   subscriber.on('message', (channel, message) => {
-    // Deliver task events ONLY to sockets authenticated as the owning user;
-    // fleet/factories events are broadcast to authenticated sockets.
+    // Deliver task/compute events ONLY to sockets authenticated as the owning
+    // user; fleet/factories events are broadcast to authenticated sockets.
     let scope = null;
     try {
       const parsed = JSON.parse(message);
-      if (channel === 'agentfi:tasks') {
+      if (channel === 'agentfi:tasks' || channel === 'agentfi:compute') {
         scope = parsed?.data?.userId || null;
       }
     } catch {
@@ -1343,6 +1354,14 @@ bootstrapRun().catch((error) => logger.error(`Admin bootstrap failed: ${error.me
 ensureRewardPool()
   .then(() => logger.info('[rewards] reward pool ready'))
   .catch((error) => logger.warn(`[rewards] pool warm-up skipped: ${error.message}`));
+
+// Compute economy: seed the server-managed service catalog additively (never a
+// delete; a concurrent boot may win the race, which is safe).
+ensureComputeServiceCatalog()
+  .then(({ seeded, total }) => {
+    if (total > 0) logger.info(`[compute] catalog ready (${total} services, ${seeded} seeded)`);
+  })
+  .catch((error) => logger.warn(`[compute] catalog warm-up skipped: ${error.message}`));
 
 server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server running on port ${PORT}`);

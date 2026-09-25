@@ -353,3 +353,124 @@ export async function fundRewardPool(input: {
 export async function confirmRewardFunding(eventId: string) {
   return apiFetch(`/api/admin/rewards/fund/${eventId}/confirm`, { method: 'POST' });
 }
+
+// ── Compute-to-revenue (Phase 4) ─────────────────────────────────────────────
+
+export interface ComputeService {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  agent: string;
+  category: string;
+  unitPriceBnb: string;
+  enabled: boolean;
+}
+
+export interface ComputeQuote {
+  id: string;
+  serviceId: string;
+  slug: string;
+  asset: string;
+  amountWei: string;
+  priceBnbWei: string;
+  priceBnbPerUnit: string | null;
+  platformFeeBnbWei: string;
+  serviceCostBnbWei: string;
+  nonce: string;
+  payloadHash: string;
+  expiresAt: string;
+  status: string;
+}
+
+export interface PaymentIntent {
+  id: string;
+  quoteId: string;
+  asset: string;
+  amountWei: string;
+  priceBnbPerUnit: string | null;
+  status: string;
+  verificationType: string;
+  external: boolean;
+  createdAt: string;
+}
+
+export interface ComputeJob {
+  id: string;
+  quoteId: string;
+  serviceId: string;
+  sellerUserId: string;
+  inputText: string;
+  agent: string;
+  status: string;
+  expectedPriceBnbWei: string;
+  revenueEventId: string | null;
+  economicValueBnb: string | null;
+  failureReason: string | null;
+  failureType: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  output?: { resultHash: string; sizeBytes: number; engine: string } | null;
+}
+
+export async function getComputeServices() {
+  const data = await apiFetch('/api/compute/services');
+  return { services: data?.services || [], demoMode: Boolean(data?.demoMode) };
+}
+
+export async function createComputeQuote(input: { serviceSlug: string; asset: string; requestText: string }) {
+  return apiFetch('/api/compute/quote', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function createComputeJob(quoteId: string) {
+  return apiFetch('/api/compute/jobs', {
+    method: 'POST',
+    body: JSON.stringify({ quoteId }),
+  });
+}
+
+export async function runComputeJob(jobId: string) {
+  return apiFetch(`/api/compute/jobs/${jobId}/run`, { method: 'POST' });
+}
+
+export async function getComputeJobs() {
+  const data = await apiFetch('/api/compute/jobs');
+  return data?.jobs || [];
+}
+
+export async function getComputeJobOutput(jobId: string) {
+  return apiFetch(`/api/compute/jobs/${jobId}/output`);
+}
+
+export async function getComputeJobDetail(jobId: string) {
+  return apiFetch(`/api/compute/jobs/${jobId}`);
+}
+
+export async function getAdminComputeOverview() {
+  return apiFetch('/api/admin/compute/overview');
+}
+
+export async function submitComputePayment(paymentId: string, input: { payerLabel?: string; txHash?: string }) {
+  return apiFetch(`/api/admin/compute/payments/${paymentId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function verifyComputePayment(paymentId: string, attestation?: string) {
+  return apiFetch(`/api/admin/compute/payments/${paymentId}/verify`, {
+    method: 'POST',
+    body: JSON.stringify({ attestation }),
+  });
+}
+
+export async function refundComputePayment(paymentId: string, note?: string) {
+  return apiFetch(`/api/admin/compute/payments/${paymentId}/refund`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}

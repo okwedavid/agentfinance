@@ -91,6 +91,35 @@ const dispatchLimiter = rateLimit({
   keyGenerator: userKey,
 });
 
+// Phase 4 compute: server-side quotes and job creation are budgeted per user
+// (falls back to IP for unauthenticated callers, who fail auth anyway).
+const computeQuoteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'compute_quote_rate_limit_exceeded' },
+  keyGenerator: userKey,
+});
+
+const computeJobLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 6,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'compute_job_rate_limit_exceeded' },
+  keyGenerator: userKey,
+});
+
+const computePaymentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limit_exceeded' },
+  keyGenerator: userKey,
+});
+
 export {
   limiter as default,
   loginLimiter,
@@ -100,4 +129,7 @@ export {
   payoutLimiter,
   factoryLimiter,
   dispatchLimiter,
+  computeQuoteLimiter,
+  computeJobLimiter,
+  computePaymentLimiter,
 };
