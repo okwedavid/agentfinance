@@ -4,7 +4,10 @@ import React from "react";
 export interface OAuthProvider {
   id: string;
   displayName: string;
-  configured: boolean;
+  /** The backend reports this provider usable only when it can complete the flow. */
+  available: boolean;
+  unavailableReason?: string | null;
+  requiresPkce?: boolean;
 }
 
 const ICON_PATHS: Record<string, React.ReactNode> = {
@@ -57,11 +60,20 @@ export default function OAuthProviderButton({
     </span>
   );
 
-  if (!provider.configured) {
+  if (!provider.available) {
+    // Rendered as a non-interactive row with an explicit reason. A provider whose
+    // credentials or redirect URI are missing must never look like a working
+    // button: it would fail at the click and read as a bug rather than a
+    // configuration gap.
+    const reason = provider.unavailableReason === "REDIRECT_URI_NOT_CONFIGURED"
+      ? "the server's OAuth redirect URI is not configured"
+      : provider.unavailableReason === "CLIENT_CREDENTIALS_NOT_CONFIGURED"
+        ? "this provider has no credentials on the server"
+        : "not configured on the server";
     return (
       <div
-        title={`${provider.displayName} login is not configured on the server. Set the ${provider.id.toUpperCase()}_CLIENT_ID and ${provider.id.toUpperCase()}_CLIENT_SECRET environment variables.`}
-        className="group relative flex cursor-not-allowed items-center justify-center gap-2 rounded-xl border border-white/5 bg-white/[0.01] py-2.5 px-3 text-sm text-gray-600 opacity-70 transition"
+        title={`${provider.displayName} login is unavailable: ${reason}.`}
+        className="flex cursor-not-allowed items-center justify-center gap-2 rounded-xl border border-white/5 bg-white/[0.01] px-3 py-2.5 text-sm text-gray-600 opacity-70"
       >
         {iconChip}
         <span className="text-xs">{provider.displayName}</span>

@@ -34,6 +34,9 @@ model User {
   emailVerified Boolean  @default(false)
   emailVerificationToken String? @unique
   emailVerificationExpiresAt DateTime?
+  // Legacy single-column OAuth link, retained so existing rows keep resolving.
+  // Multi-provider linking uses AuthIdentity below; a user may hold several
+  // provider identities at once, which this column can no longer represent.
   oauthId       String?  @unique
   passwordHash  String
   role          String   @default("USER") // USER | ADMIN | SUPER_ADMIN, server-authoritative
@@ -42,11 +45,53 @@ model User {
   walletAddress String?
   walletProfiles Json?
   preferredNetwork String? @default("ethereum")
-  createdAt     DateTime @default(now())
+  createdAt     DateTime  @default(now())
   sessions      AuthSession[]
+  identities    AuthIdentity[]
   tasks         Task[]
   payouts       Payout[]
   digitalProducts DigitalProduct[]
+}
+
+// One external provider account linked to exactly one AgentFinance user.
+//
+// The previous single `User.oauthId` column could hold only ONE provider per
+// user, so linking a second provider overwrote the first and silently
+// orphaned the original login. This table holds many identities per user while
+// still guaranteeing that a given provider account maps to exactly one user.
+model AuthIdentity {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider        String   // google | facebook | x
+  providerUserId  String   // stable per-provider subject id
+  email           String?
+  // Whether the provider asserted this email was verified. Email-based account
+  // linking is only allowed when this is true; an unverified provider email is
+  // attacker-controllable and must never be used to claim an existing account.
+  emailVerified   Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  lastLoginAt     DateTime?
+
+  // A provider account can belong to only one AgentFinance user. This is what
+  // makes duplicate linking detectable instead of silently merging accounts.
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+// Durable store for the OAuth `state` handshake.
+//
+// This was an in-process Map, which breaks on Render: the /start and /callback
+// hops can be served by different instances (scale-out, spin-down, redeploy), so
+// the state issued by one instance is simply absent on the other and a
+// perfectly valid login fails with "invalid or expired state".
+model OAuthState {
+  state     String   @id
+  provider  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 model AuthSession {
@@ -55,8 +100,10 @@ model AuthSession {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   revoked   Boolean  @default(false)
   createdAt DateTime @default(now())
+  expiresAt DateTime
 
   @@index([userId])
+  @@index([expiresAt])
 }
 
 model Task {

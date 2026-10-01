@@ -1,14 +1,14 @@
 "use client";
 import { useState } from "react";
-import { getOAuthProviders, isLoggedIn, API_BASE } from "@/lib/api";
+import { getOAuthProviders, API_BASE, type OAuthProviderInfo } from "@/lib/api";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Link from "next/link";
-import OAuthProviderButton, { type OAuthProvider } from "@/components/OAuthProviderButton";
+import OAuthProviderButton from "@/components/OAuthProviderButton";
 
 export default function LoginPage() {
-  const { login, register } = useAuth();
+  const { login, register, status: authStatus } = useAuth();
   const router = useRouter();
   const [mode, setMode]       = useState<'login' | 'register'>(() => {
     if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'register') {
@@ -21,23 +21,41 @@ export default function LoginPage() {
   const [password, setPass]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
-  const [providers, setProviders] = useState<OAuthProvider[]>([]);
+  const [providers, setProviders] = useState<OAuthProviderInfo[]>([]);
 
+  // Availability comes from the backend, never from a hardcoded list here.
+  const activeProviders = providers.filter((p) => p.available);
+  const unavailableProviders = providers.filter((p) => !p.available);
+
+  // Send an already-authenticated visitor to the dashboard — but only on a
+  // CONFIRMED session. The old check ran on mount and inspected client storage,
+  // which raced /auth/me and could bounce a valid session to /login.
   useEffect(() => {
-    if (isLoggedIn()) window.location.href = '/dashboard';
-  }, []);
+    if (authStatus === "AUTHENTICATED") router.replace("/dashboard");
+  }, [authStatus, router]);
 
   useEffect(() => {
     getOAuthProviders()
-      .then((data: any[]) => {
-        const list: OAuthProvider[] = Array.isArray(data)
-          ? data.filter((item) => item && typeof item.id === "string")
-          : [];
+      .then((list) => {
         const order = ["google", "facebook", "x"];
-        list.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
-        setProviders(list);
+        setProviders(
+          [...list].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)),
+        );
       })
-      .catch(() => {});
+      .catch(() => setProviders([]));
+  }, []);
+
+  // Surface an OAuth failure the backend redirected here with, instead of
+  // showing a bare login form as if nothing happened.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash) return;
+    const params = new URLSearchParams(hash);
+    const oauthError = params.get("oauth_error");
+    if (oauthError) setError(oauthError);
+    // Clear the fragment so a refresh does not re-show a stale error.
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
   }, []);
 
   async function submit(e: React.FormEvent) {
@@ -132,15 +150,20 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {providers.length > 0 && (
+          {/* Only providers the backend reports as ACTIVE are offered as a
+              working sign-in. Facebook and X have no credentials configured in
+              this deployment, and the previous UI rendered all three as clickable
+              buttons regardless — advertising a capability that does not exist
+              and failing at the click. */}
+          {activeProviders.length > 0 && (
             <>
               <div className="mt-5 flex items-center gap-3 text-[11px] uppercase tracking-[0.2em] text-gray-600">
                 <span className="h-px flex-1 bg-white/[0.06]" />
                 <span>Do you already have an account?</span>
                 <span className="h-px flex-1 bg-white/[0.06]" />
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {providers.map((p) => (
+              <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(activeProviders.length, 3)}, minmax(0, 1fr))` }}>
+                {activeProviders.map((p) => (
                   <OAuthProviderButton
                     key={p.id}
                     provider={p}
@@ -149,6 +172,13 @@ export default function LoginPage() {
                 ))}
               </div>
             </>
+          )}
+
+          {unavailableProviders.length > 0 && (
+            <p className="mt-4 text-center text-[11px] leading-5 text-gray-600">
+              Not available: {unavailableProviders.map((p) => p.displayName).join(", ")}.{" "}
+              These sign-in methods are not configured on this deployment.
+            </p>
           )}
 
           {/* Features preview */}

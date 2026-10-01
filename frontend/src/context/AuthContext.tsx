@@ -1,8 +1,7 @@
-"use client";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+﻿"use client";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   getMe,
-  getToken,
   isLoggedIn,
   login as apiLogin,
   logout as apiLogout,
@@ -27,18 +26,32 @@ interface User {
   isNewUser?: boolean;
 }
 
+/**
+ * Explicit authentication lifecycle.
+ *
+ * The old context used `loading: boolean` with `user: User | null`. That encoding
+ * cannot distinguish "the check has not finished yet" from "the check finished and
+ * found no session", which is the ambiguity that makes a guard redirect a signed-in
+ * user to /login on a hard refresh: the guard sees `loading === false, user === null`
+ * during the window before `/auth/me` resolves.
+ *
+ * AUTH_CHECKING must never be treated as AUTHENTICATED or UNAUTHENTICATED.
+ */
+export type AuthStatus = "AUTH_CHECKING" | "AUTHENTICATED" | "UNAUTHENTICATED";
+
 interface AuthCtx {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string) => Promise<void>;
   user: User | null;
+  /** @deprecated Prefer `status`. Retained so existing consumers keep working. */
   loading: boolean;
+  status: AuthStatus;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
   deleteAccount: () => Promise<void>;
   isAdmin: boolean;
   isSuperAdmin: boolean;
   isNewUser: boolean;
-  token: string | null;
 }
 
 const AuthContext = createContext<AuthCtx>({
@@ -46,13 +59,13 @@ const AuthContext = createContext<AuthCtx>({
   register: async () => {},
   user: null,
   loading: true,
+  status: "AUTH_CHECKING",
   refresh: async () => {},
   logout: async () => {},
   deleteAccount: async () => {},
   isAdmin: false,
   isSuperAdmin: false,
   isNewUser: false,
-  token: null,
 });
 
 function normalizeUser(payload: any): User | null {
@@ -76,89 +89,110 @@ function normalizeUser(payload: any): User | null {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState<string | null>(null);
+  const [status, setStatus] = useState<AuthStatus>("AUTH_CHECKING");
   const [isNewUser, setIsNewUser] = useState(false);
 
-  async function applyAuthResult(payload: any, newUser: boolean) {
-    setUser(normalizeUser(payload));
-    setToken(getToken());
-    setIsNewUser(newUser && payload?.isNewUser === true);
-  }
+  // Guards against a slow /auth/me response being overwritten by a later
+  // resolution, which is how an intermittent logout appears in production.
+  const checkIdRef = useRef(0);
 
-  async function refresh() {
+  const applyAuthResult = useCallback((payload: any, newUser: boolean) => {
+    setUser(normalizeUser(payload));
+    setIsNewUser(newUser && payload?.isNewUser === true);
+    setStatus("AUTHENTICATED");
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const checkId = ++checkIdRef.current;
+
+    // No marker cookie means no session is even possible, so skip the round trip.
+    // This is an optimisation only: the server stays the authority, so a forged
+    // marker cookie still fails every authenticated call.
     if (!isLoggedIn()) {
-      setUser(null);
-      setToken(null);
-      setIsNewUser(false);
-      setLoading(false);
+      if (checkId === checkIdRef.current) {
+        setUser(null);
+        setIsNewUser(false);
+        setStatus("UNAUTHENTICATED");
+      }
       return;
     }
 
     try {
       const me = await getMe();
-      setUser(normalizeUser(me));
-      setToken(getToken());
-      setIsNewUser(false);
+      if (checkId !== checkIdRef.current) return;
+      const normalized = normalizeUser(me);
+      if (normalized) {
+        setUser(normalized);
+        setIsNewUser(false);
+        setStatus("AUTHENTICATED");
+      } else {
+        // A 200 with an unusable payload is not a session.
+        setUser(null);
+        setIsNewUser(false);
+        setStatus("UNAUTHENTICATED");
+      }
     } catch {
+      if (checkId !== checkIdRef.current) return;
       setUser(null);
-      setToken(null);
       setIsNewUser(false);
-    } finally {
-      setLoading(false);
+      setStatus("UNAUTHENTICATED");
     }
-  }
+  }, []);
 
   async function login(username: string, password: string) {
-    setLoading(true);
     const payload = await apiLogin(username, password);
-    await applyAuthResult(payload, false);
+    applyAuthResult(payload, false);
   }
 
   async function register(username: string, email: string, password: string) {
-    setLoading(true);
-    const payload = await apiRegister(username, password, email);
-    await applyAuthResult(payload, true);
+    const payload = await apiRegister(username, email, password);
+    applyAuthResult(payload, true);
   }
 
   async function logout() {
+    // Revoke server-side first; the response also clears the cookie.
     await apiLogoutSession();
     apiLogout();
+    // Invalidate any in-flight check so a pending /auth/me cannot resurrect the
+    // session after logout.
+    checkIdRef.current += 1;
     setUser(null);
-    setToken(null);
     setIsNewUser(false);
+    setStatus("UNAUTHENTICATED");
     window.location.href = "/login";
   }
 
   async function deleteAccount() {
     await apiDeleteAccount();
     apiLogout();
+    checkIdRef.current += 1;
     setUser(null);
-    setToken(null);
     setIsNewUser(false);
+    setStatus("UNAUTHENTICATED");
     window.location.href = "/login";
   }
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   const isAdmin = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const loading = status === "AUTH_CHECKING";
 
   const value = useMemo(() => ({
     login,
     register,
     user,
     loading,
+    status,
     refresh,
     logout,
     deleteAccount,
     isAdmin,
     isSuperAdmin,
     isNewUser,
-    token,
-  }), [user, loading, isAdmin, isSuperAdmin, isNewUser, token]);
+  }), [user, loading, status, isAdmin, isSuperAdmin, isNewUser, refresh]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

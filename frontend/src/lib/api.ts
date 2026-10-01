@@ -3,26 +3,77 @@ import { API_URL, WS_URL } from './config';
 export const API_BASE = API_URL;
 export const WS_BASE = WS_URL;
 
-export function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return window.sessionStorage.getItem('token');
+// ── Session credentials ───────────────────────────────────────────────────────
+//
+// The session lives in an HttpOnly cookie set by the backend. It is deliberately
+// NOT kept in sessionStorage or localStorage:
+//
+//   - The old build stored the JWT in sessionStorage and replayed it as an
+//     Authorization header. That made the token readable by any script on the
+//     page (one XSS = full account takeover) and per-tab, so a refresh, a new tab
+//     or ordinary navigation silently dropped the login.
+//   - An HttpOnly cookie is invisible to JavaScript and is sent automatically by
+//     the browser on every request, which is what makes the session survive.
+//
+// `webSocketToken` is the single exception, in memory only. A WebSocket handshake
+// cannot read cookies, so the backend exposes a short-lived ticket for that one
+// purpose. It is never written to storage.
+
+/**
+ * In-memory WebSocket ticket. Deliberately not persisted: it is a single-use,
+ * short-lived credential and must not outlive the page.
+ *
+ * A WebSocket handshake cannot send cookies, so the backend issues this ticket
+ * from the authenticated session. It is the ONLY credential the browser holds in
+ * script-readable form, it is never written to storage, and it is scoped to the
+ * WebSocket handshake.
+ */
+/**
+ * Marker cookie name. Must match SESSION_MARKER_COOKIE in sessionCookie.js.
+ * Carries no authority — it only tells the page a session might exist so a guard
+ * does not redirect before /auth/me has answered.
+ */
+const SESSION_MARKER_COOKIE = 'af_session_present';
+
+let wsTicket: { token: string; expiresAt: number } | null = null;
+
+export function getWebSocketTicket(): string | null {
+  if (!wsTicket) return null;
+  if (Date.now() >= wsTicket.expiresAt) {
+    wsTicket = null;
+    return null;
+  }
+  return wsTicket.token;
 }
 
-export function setToken(token: string) {
-  if (typeof window !== 'undefined') window.sessionStorage.setItem('token', token);
+export function setWebSocketTicket(token: string, ttlSeconds = 60) {
+  wsTicket = { token, expiresAt: Date.now() + ttlSeconds * 1000 };
 }
 
-export function removeToken() {
-  if (typeof window === 'undefined') return;
-  window.sessionStorage.removeItem('token');
+export function clearWebSocketTicket() {
+  wsTicket = null;
 }
 
+/**
+ * Whether a session may exist.
+ *
+ * Intentionally NOT a proof of authentication. The cookie is HttpOnly, so the
+ * page cannot inspect it; the only authority on whether the user is logged in is
+ * `GET /auth/me`. This helper exists solely so a guard can skip a pointless
+ * redirect on a page the user cannot possibly be authenticated on, and callers
+ * must still resolve the real state before rendering protected UI.
+ */
 export function isLoggedIn(): boolean {
-  return !!getToken();
+  if (typeof document === 'undefined') return false;
+  // A visible marker cookie set alongside the HttpOnly session cookie. Carries
+  // no authority: the server still validates the HttpOnly cookie on every call.
+  return document.cookie
+    .split(';')
+    .some((part) => part.trim().startsWith(`${SESSION_MARKER_COOKIE}=`));
 }
 
 export function logout() {
-  removeToken();
+  clearWebSocketTicket();
   if (typeof window !== 'undefined') {
     window.sessionStorage.removeItem('agentfi_wallet');
     window.sessionStorage.removeItem('af_settings');
@@ -31,14 +82,18 @@ export function logout() {
   }
 }
 
-// Server-side logout: revokes the current session so the token cannot be reused
-// even if it is ever exposed.
+/**
+ * Server-side logout: revokes the session AND clears the cookie.
+ *
+ * The server-side revoke is what makes the credential worthless. Clearing the
+ * browser copy alone would leave a still-valid token usable by anyone who had
+ * captured it, so logout must always do both.
+ */
 export async function logoutSession() {
   try {
     await apiFetch('/auth/logout', { method: 'POST' });
   } catch {
-    // Ignore network errors; local token removal still signs the user out of
-    // this tab.
+    // A network failure must not trap the user in a signed-in UI.
   } finally {
     logout();
   }
@@ -58,26 +113,32 @@ export async function demoteUser(username: string) {
   });
 }
 
+/**
+ * The single authenticated-request path for the whole app.
+ *
+ * Every call uses `credentials: 'include'` so the HttpOnly session cookie is
+ * sent. This is centralised deliberately: the previous build mixed
+ * include/omit across call sites, which is exactly the class of bug where an
+ * endpoint "randomly" 401s depending on how it was called.
+ */
 export async function apiFetch(path: string, options: RequestInit = {}) {
   if (!API_BASE) {
     throw new Error(
       'Backend endpoint is not configured. Set NEXT_PUBLIC_API_URL to the backend origin in Render and rebuild.',
     );
   }
-  const token = getToken();
   const headers = new Headers(options.headers || {});
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
   if (!isFormData && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
 
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
-    credentials: options.credentials || 'include',
+    // Never overridable: the cookie is the session, so omitting credentials here
+    // would silently produce an unauthenticated request.
+    credentials: 'include',
     headers,
   });
 
@@ -90,32 +151,58 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
   if (!response.ok) {
     const message = data?.error || data?.message || `HTTP ${response.status}`;
-    throw new Error(message);
+    const error = new Error(message) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
   }
 
   return data;
 }
 
 export async function login(username: string, password: string) {
-  const data = await apiFetch('/auth/login', {
+  // The session arrives as a Set-Cookie; the body `token` is ignored on purpose.
+  return apiFetch('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
   });
-  if (data?.token) setToken(data.token);
-  return data;
 }
 
 export async function register(username: string, password: string, email?: string) {
-  const data = await apiFetch('/auth/register', {
+  return apiFetch('/auth/register', {
     method: 'POST',
     body: JSON.stringify({ username, password, email }),
   });
-  if (data?.token) setToken(data.token);
-  return data;
+}
+
+/** Linked provider identities for the signed-in user. */
+export async function getAuthIdentities() {
+  const data = await apiFetch('/auth/identities');
+  return Array.isArray(data?.identities) ? data.identities : [];
+}
+
+export async function unlinkAuthIdentity(provider: string) {
+  return apiFetch('/auth/identities/unlink', {
+    method: 'POST',
+    body: JSON.stringify({ provider }),
+  });
 }
 
 export async function getMe() {
   return apiFetch('/auth/me');
+}
+
+/**
+ * Exchange the HttpOnly session for a short-lived WebSocket ticket.
+ *
+ * A browser cannot attach cookies to a WebSocket handshake, so realtime auth
+ * needs an explicit credential. The ticket is returned in the response body,
+ * held in memory only, and never persisted — the previous build kept the full
+ * session JWT in sessionStorage purely to satisfy this one handshake.
+ */
+export async function issueWebSocketTicket() {
+  const data = await apiFetch('/auth/ws-ticket', { method: 'POST' });
+  if (data?.ticket) setWebSocketTicket(data.ticket, Number(data.expiresIn) || 60);
+  return data?.ticket as string | undefined;
 }
 
 export async function getRuntimeStatus() {
@@ -239,13 +326,39 @@ export async function rejectPayout(payoutId: string, reason?: string) {
   });
 }
 
-export async function getOAuthProviders() {
+export interface OAuthProviderInfo {
+  id: string;
+  displayName: string;
+  /** True only when the backend can actually complete this provider's flow. */
+  available: boolean;
+  unavailableReason: string | null;
+  requiresPkce: boolean;
+}
+
+/**
+ * Provider availability, straight from the backend.
+ *
+ * A provider is shown as usable only when the backend reports it available. The
+ * login UI must never present a provider as working on the strength of a hardcoded
+ * list: Facebook and X have no credentials configured in this deployment, and
+ * offering them anyway would be advertising a capability that does not exist.
+ */
+export async function getOAuthProviders(): Promise<OAuthProviderInfo[]> {
   try {
     const data = await apiFetch('/auth/oauth/providers');
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data?.providers)) return data.providers;
-    return [];
+    const list = Array.isArray(data) ? data : (Array.isArray(data?.providers) ? data.providers : []);
+    return list
+      .filter((p: any) => p && typeof p.id === 'string')
+      .map((p: any) => ({
+        id: p.id,
+        displayName: p.displayName || p.id,
+        available: p.available === true || p.configured === true,
+        unavailableReason: p.unavailableReason ?? (p.configured === true ? null : 'CLIENT_CREDENTIALS_NOT_CONFIGURED'),
+        requiresPkce: p.requiresPkce === true,
+      }));
   } catch {
+    // Unreachable backend: report every provider unavailable rather than
+    // guessing, so the UI never implies a working sign-in.
     return [];
   }
 }

@@ -6,11 +6,27 @@ import {
   ROLE_ADMIN,
   ROLE_SUPER_ADMIN,
 } from '../utils/security.js';
+import { readSessionCookie } from '../services/sessionCookie.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
+// Session lifetime. Kept in one place so the cookie Max-Age, the JWT expiry and
+// the AuthSession.expiresAt column cannot drift apart.
+export const SESSION_TTL_DAYS = 7;
+export const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * Extract the session token from a request.
+ *
+ * The session cookie is authoritative. The Authorization header is still
+ * accepted because the WebSocket handshake has no cookie jar available to it and
+ * must authenticate from an explicit first frame.
+ */
 export function getTokenFromRequest(req) {
-  const authHeader = req.headers.authorization;
+  const fromCookie = readSessionCookie(req.headers?.cookie);
+  if (fromCookie) return fromCookie;
+
+  const authHeader = req.headers?.authorization;
   if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7);
   return null;
 }
@@ -29,6 +45,10 @@ export async function resolveUserFromToken(token) {
   if (!payload?.sid || !payload?.sub) return null;
   const session = await prisma.authSession.findUnique({ where: { id: payload.sid } });
   if (!session || session.revoked || session.userId !== payload.sub) return null;
+  // A session past its own expiry is dead even if the JWT signature still
+  // verifies. Revoking a session marks it immediately; expiry catches the
+  // sessions nobody ever logged out of.
+  if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) return null;
   return { user: payload, sid: payload.sid };
 }
 
@@ -36,13 +56,45 @@ export async function resolveUserFromToken(token) {
 // session for the user. Used on login, register, and OAuth completion.
 export async function createSessionForUser(userId) {
   await prisma.authSession.updateMany({ where: { userId }, data: { revoked: true } });
-  const session = await prisma.authSession.create({ data: { userId } });
+  const session = await prisma.authSession.create({
+    data: {
+      userId,
+      expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+    },
+  });
   return session;
 }
 
-// Session-bound auth. Tokens issued without a sid (pre-session builds) are now
-// rejected, which forces a clean re-login once and stops background auto-login:
-// the httpOnly cookie path is gone, so a browser restart cannot resurrect a login.
+/** Sign the session JWT for a freshly created session row. */
+export function signSessionToken(user, session, { expiresIn = `${SESSION_TTL_DAYS}d` } = {}) {
+  return jwt.sign(
+    { sub: user.id, username: user.username, role: user.role, sid: session.id },
+    JWT_SECRET,
+    { expiresIn },
+  );
+}
+
+/**
+ * Revoke the caller's current session.
+ *
+ * The authoritative logout. Clearing the browser copy without revoking here
+ * would leave a still-valid credential usable by anyone who captured it, so
+ * logout must always do both.
+ */
+export async function revokeSession(sid) {
+  if (!sid) return null;
+  return prisma.authSession.updateMany({ where: { id: sid }, data: { revoked: true } });
+}
+
+/** Revoke every session for a user (account deletion). */
+export async function revokeAllSessionsForUser(userId) {
+  return prisma.authSession.updateMany({ where: { userId }, data: { revoked: true } });
+}
+
+// Session-bound auth. The session cookie (HttpOnly) is the primary credential;
+// an Authorization header remains accepted for the WebSocket handshake, which
+// cannot read cookies. Both paths resolve through the identical session check,
+// so a cookie and a header grant exactly the same authority.
 export async function authMiddleware(req, res, next) {
   try {
     const token = getTokenFromRequest(req);
@@ -94,6 +146,6 @@ export function requireAdmin(req, res, next) {
   return requireRole([ROLE_ADMIN, ROLE_SUPER_ADMIN])(req, res, next);
 }
 
-export { isAdminRole, ROLE_ADMIN, ROLE_SUPER_ADMIN };
+export { isAdminRole, ROLE_ADMIN, ROLE_SUPER_ADMIN, JWT_SECRET };
 
 export default authMiddleware;

@@ -1,15 +1,18 @@
 "use client";
 import React, { useEffect, useState } from 'react';
-import { getToken } from '@/lib/api';
 import { useAuth } from '../context/AuthContext';
 export default function AgentStatus() {
   const [online, setOnline] = useState<number>(0);
   const [names, setNames] = useState<string[]>([]);
   const [lastMessage, setLastMessage] = useState<string>(""); // For the live text feed
 
-  const authCtx = useAuth();
-  const token = getToken() || authCtx?.token;
-  
+  // `authenticated` replaces the previous `token` dependency. This panel used to
+  // put the session JWT in the WebSocket QUERY STRING, which leaks it into
+  // server access logs, proxy logs and browser history. Presence data is not
+  // worth a credential exposure, so the socket is opened only once the session
+  // is confirmed, and it never carries a token in the URL.
+  const { status: authStatus } = useAuth();
+  const authenticated = authStatus === 'AUTHENTICATED';
 
   // Requirement 2: Text Processing Utility
   const processAgentText = (text: string) => {
@@ -30,11 +33,11 @@ export default function AgentStatus() {
   };
 
   useEffect(() => {
-    if (!token || typeof window === 'undefined') return;
+    // Open only for a confirmed session, and never with a credential in the URL.
+    if (!authenticated || typeof window === 'undefined') return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.hostname}${window.location.port ? ':5000' : ''}/?token=${token}`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(`${protocol}//${window.location.hostname}${window.location.port ? ':5000' : ''}/`);
 
     ws.onmessage = (ev) => {
       try {
@@ -49,9 +52,9 @@ export default function AgentStatus() {
         }
       } catch (e) { /* ignore */ }
     };
-    
+
     return () => ws.close();
-  }, [token]);
+  }, [authenticated]);
 
   return (
     <div className="fixed top-0 left-0 w-full z-[60] bg-[#0f172a]/90 backdrop-blur-md border-b border-green-500/30 px-4 py-2 shadow-2xl">

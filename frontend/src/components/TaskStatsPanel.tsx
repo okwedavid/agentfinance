@@ -7,7 +7,6 @@ const COLORS = ['#6366f1', '#22d3ee', '#10b981', '#f59e42', '#ef4444'];
 
 const TaskStatsPanel: React.FC = () => {
   const { user } = useAuth();
-  const token = typeof window !== 'undefined' ? (document.cookie.match(/token=([^;]+)/)?.[1] || '') : '';
   const { parsedMessages } = useWebSocket();
 
   // Aggregate status breakdown from live events

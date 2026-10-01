@@ -1,11 +1,8 @@
 "use client";
 import { useState } from 'react';
 import { API_URL } from '@/lib/env';
-import { useAuth } from '@/context/AuthContext';
 
 export default function DispatchSelector({ taskId }: { taskId: string }) {
-  const auth = useAuth();
-  const token = (auth as any).token;
   const [agents, setAgents] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -24,9 +21,12 @@ export default function DispatchSelector({ taskId }: { taskId: string }) {
     if (!taskId) return alert('missing taskId');
     setLoading(true);
     try {
+      // The session is an HttpOnly cookie the page cannot read, so it is not
+      // attached as a header. credentials:'include' is what sends it.
       await fetch(`${API_URL}/api/dispatch`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ taskId, agents: selected }),
       });
       alert('Dispatched');

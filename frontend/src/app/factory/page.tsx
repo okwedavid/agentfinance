@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { API_URL } from '@/lib/env';
-import { getToken, isLoggedIn } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 
 type Product = {
   id: string;
@@ -16,15 +16,15 @@ type Product = {
   outcome?: string;
 };
 
-function authHeaders() {
-  const token = getToken();
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
+// The session is an HttpOnly cookie, so there is no token to attach by hand.
+// Every call must send credentials so the browser includes it.
+const authHeaders = { 'Content-Type': 'application/json' } as const;
+
+const authFetch = (path: string, init: RequestInit = {}) =>
+  fetch(`${API_URL}${path}`, { ...init, credentials: 'include', headers: { ...authHeaders, ...(init.headers || {}) } });
 
 export default function FactoryPage() {
+  const { status: authStatus } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [generating, setGenerating] = useState(false);
   const [batch, setBatch] = useState(1);
@@ -36,7 +36,7 @@ export default function FactoryPage() {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch(`${API}/api/factory/products?take=50`, { headers: authHeaders() });
+      const res = await authFetch('/api/factory/products?take=50');
       const data = await res.json();
       if (Array.isArray(data)) setProducts(data);
     } catch (e) {
@@ -45,19 +45,17 @@ export default function FactoryPage() {
   };
 
   useEffect(() => {
-    if (!isLoggedIn()) {
-      window.location.href = '/login';
-      return;
-    }
+    // Load only once the session is CONFIRMED by the server. A pending auth check
+    // is not a logout, so this must never redirect on AUTH_CHECKING.
+    if (authStatus !== "AUTHENTICATED") return;
     fetchProducts();
-  }, []);
+  }, [authStatus]);
 
   const generate = async () => {
     setGenerating(true);
     try {
-      const res = await fetch(`${API}/api/factory/generate`, {
+      const res = await authFetch('/api/factory/generate', {
         method: 'POST',
-        headers: authHeaders(),
         body: JSON.stringify({ niche: niche || null, batch })
       });
       const data = await res.json();

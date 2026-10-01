@@ -170,7 +170,7 @@ function TaskCard({
 }
 
 export default function DashboardPage() {
-  const { user, isNewUser } = useAuth();
+  const { user, isNewUser, status } = useAuth();
   const [tasks, setTasks] = useState<any[]>([]);
   const [runtime, setRuntime] = useState<any>(null);
   const [message, setMessage] = useState("");
@@ -187,15 +187,19 @@ export default function DashboardPage() {
 
   const { connectionStatus } = useWebSocket({ onEvent });
 
+  // Load data only once the session is CONFIRMED.
+  //
+  // The previous guard read the presence of a stored token and redirected
+  // immediately when it was absent. With a cookie-based session that check races
+  // /auth/me: the page could declare "signed out" before the cookie had been
+  // validated, which is precisely the "reaches the dashboard, then logs out"
+  // symptom. `status === "UNAUTHENTICATED"` means the server has already said no.
   useEffect(() => {
-    if (!isLoggedIn()) {
-      window.location.href = "/login";
-      return;
-    }
+    if (status !== "AUTHENTICATED") return;
 
     void getTasks().then(setTasks).catch(() => setTasks([]));
     void getRuntimeStatus().then(setRuntime).catch(() => setRuntime(null));
-  }, []);
+  }, [status]);
 
   async function launchTask(action: string) {
     if (!action.trim()) return;

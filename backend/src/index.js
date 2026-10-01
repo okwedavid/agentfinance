@@ -14,7 +14,18 @@ import analyticsRouter from './routes/analytics.js';
 import dispatchFactory from './routes/dispatch.js';
 import sessionsFactory from './routes/sessions.js';
 import walletRouter from './routes/wallet.js';
-import { authMiddleware, createSessionForUser, requireAdmin, requireRole, resolveUserFromToken } from './middleware/auth.js';
+import {
+  authMiddleware,
+  createSessionForUser,
+  requireAdmin,
+  requireRole,
+  resolveUserFromToken,
+  revokeSession,
+  revokeAllSessionsForUser,
+  signSessionToken,
+} from './middleware/auth.js';
+import { setSessionCookie, clearSessionCookieHeader } from './services/sessionCookie.js';
+import { listIdentitiesForUser, unlinkIdentity } from './services/accountLinking.js';
 import {
   ROLE_ADMIN,
   ROLE_SUPER_ADMIN,
@@ -81,8 +92,15 @@ if (!JWT_SECRET) {
 }
 
 // OAuth startup validation: if a provider is enabled but its redirect URI is
-// unresolvable, fail clearly instead of shipping a broken callback. In
-// production this blocks boot; in development it logs a clear warning.
+// unresolvable OR does not point at this backend, fail clearly instead of
+// shipping a broken callback. In production this blocks boot; in development it
+// logs a clear warning.
+//
+// Production previously ran with the FRONTEND origin configured as the OAuth
+// redirect URI. Google authenticated the user, then delivered the authorization
+// code to a frontend page that ignored it, so no session was ever created and
+// the user was bounced straight back to /login. validateRedirectUriForBackend()
+// now rejects that configuration outright so it cannot ship again.
 const oauthValid = assertOAuthConfiguration();
 if (!oauthValid && process.env.NODE_ENV === 'production') {
   logger.error('FATAL: OAuth configuration is invalid. Fix the redirect URI configuration and redeploy.');
@@ -153,6 +171,8 @@ if (!redis) {
   logger.warn('No REDIS_URL configured. BullMQ queue disabled; tasks will run inline.');
 }
 
+// Session signing lives in middleware/auth.js so the HTTP cookie path, the
+// OAuth callback and the WebSocket handshake all mint tokens identically.
 function signToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
@@ -555,7 +575,8 @@ app.post('/auth/register', registerLimiter, async (req, res) => {
     }
     const user = await prisma.user.create({ data });
     const session = await createSessionForUser(user.id);
-    const token = signToken({ sub: user.id, username: user.username, role: user.role, sid: session.id });
+    const token = signSessionToken(user, session);
+    setSessionCookie(res, token);
 
     if (normalizedEmail) {
       const frontendBase = process.env.FRONTEND_BASE_URL
@@ -595,8 +616,13 @@ app.post('/auth/login', loginLimiter, async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'invalid credentials' });
 
     const session = await createSessionForUser(user.id);
-    const token = signToken({ sub: user.id, username: user.username, role: user.role, sid: session.id });
+    const token = signSessionToken(user, session);
 
+    // The session is delivered as an HttpOnly cookie, so it is not readable by
+    // any script on the page. `token` is still returned in the body for
+    // non-browser clients and for the WebSocket handshake, which has no cookie
+    // jar; the frontend does not persist it.
+    setSessionCookie(res, token);
     res.json({
       ...serializeUser(user, { isNewUser: false }),
       token,
@@ -639,18 +665,78 @@ app.patch('/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+// Logout revokes the session SERVER-SIDE and then clears the cookie.
+//
+// Both halves are required. Clearing only the cookie would leave the JWT valid
+// for anyone who had captured it, and revoking only the session would leave the
+// browser replaying a credential the server no longer honours. The previous
+// implementation revoked the session but never cleared the cookie, so the
+// browser kept presenting a dead token until the SPA removed it by hand.
 app.post('/auth/logout', authMiddleware, async (req, res) => {
   try {
     if (req.sid) {
-      await prisma.authSession.updateMany({
-        where: { id: req.sid, userId: req.user.sub },
-        data: { revoked: true },
-      });
+      await revokeSession(req.sid);
     }
+    clearSessionCookieHeader(res);
     res.json({ ok: true });
   } catch (error) {
     logger.error('logout error', error);
+    // Still clear the cookie on failure: the user asked to be signed out, and
+    // leaving a cookie behind is the worse outcome.
+    clearSessionCookieHeader(res);
     res.status(500).json({ error: 'failed' });
+  }
+});
+
+// Account deletion must end every session, not just the current one. Otherwise
+// a second tab, or a captured token, would remain authenticated against a
+// deleted user until it happened to expire.
+/**
+ * POST /auth/ws-ticket — exchange the session cookie for a short-lived ticket
+ * that the WebSocket handshake can carry.
+ *
+ * A browser cannot send cookies on a WebSocket handshake, so realtime auth needs
+ * an explicit credential. This issues a ticket scoped to exactly that purpose
+ * rather than handing the page its session JWT, which is what the previous build
+ * did by keeping the full token in sessionStorage.
+ *
+ * The ticket is a separate short-lived JWT: it carries the session id, so
+ * revoking the session (logout, account deletion) invalidates it immediately, and
+ * it expires on its own in a minute.
+ */
+const WS_TICKET_TTL_SECONDS = 60;
+app.post('/auth/ws-ticket', authMiddleware, async (req, res) => {
+  try {
+    const ticket = jwt.sign(
+      { sub: req.user.sub, sid: req.sid, scope: 'ws' },
+      JWT_SECRET,
+      { expiresIn: `${WS_TICKET_TTL_SECONDS}s` },
+    );
+    res.json({ ticket, expiresIn: WS_TICKET_TTL_SECONDS });
+  } catch (error) {
+    logger.error('ws ticket error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+// Linked provider identities, so the user can see which accounts reach this
+// profile. Exposes provider and email only - never a token or provider secret.
+app.get('/auth/identities', authMiddleware, async (req, res) => {
+  try {
+    res.json({ identities: await listIdentitiesForUser(req.user.sub) });
+  } catch (error) {
+    logger.error('list identities error', error);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.post('/auth/identities/unlink', authMiddleware, async (req, res) => {
+  try {
+    const result = await unlinkIdentity({ userId: req.user.sub, provider: req.body?.provider });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    res.status(status).json({ error: status === 500 ? 'failed' : error.message });
   }
 });
 
@@ -1312,12 +1398,40 @@ const WS_AUTH_TIMEOUT_MS = 10000;
 const WS_HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_WS_PER_USER = 3;
 
+/**
+ * Verify a WebSocket ticket.
+ *
+ * A ticket must carry `scope: 'ws'`. Without that check a stolen session JWT
+ * could be replayed straight into the WebSocket handshake and skip the short
+ * lifetime the ticket exists to impose. The session lookup underneath is the
+ * same one HTTP auth uses, so logout and account deletion invalidate tickets too.
+ */
+function resolveWsTicket(ticket) {
+  if (!ticket || !JWT_SECRET) return Promise.resolve(null);
+  let payload;
+  try {
+    payload = jwt.verify(ticket, JWT_SECRET);
+  } catch {
+    return Promise.resolve(null);
+  }
+  if (payload?.scope !== 'ws' || !payload?.sid || !payload?.sub) return Promise.resolve(null);
+  // resolveUserFromToken verifies the signature and checks the session row, so
+  // it accepts the ticket (same shape, same secret). The user id is taken from
+  // the verified payload rather than the raw input.
+  return resolveUserFromToken(ticket).then((resolved) => {
+    if (!resolved) return null;
+    return { id: resolved.user.sub, sid: resolved.sid };
+  });
+}
+
 wss.on('connection', (ws, req) => {
   logger.info(`WebSocket client connected from ${req.socket.remoteAddress}`);
 
-  // Unauthenticated sockets get a short window to present a session JWT in
-  // their FIRST message ({ type: 'auth', token }). The token never travels in
-  // the query string.
+  // Unauthenticated sockets get a short window to present a WS TICKET in their
+  // FIRST message ({ type: 'auth', ticket }). The ticket never travels in the
+  // query string, and it is not the session JWT: a browser cannot attach cookies
+  // to a WebSocket handshake, so it exchanges its session for a one-minute,
+  // session-bound ticket via POST /auth/ws-ticket.
   ws.isAuthenticated = false;
   ws.isAlive = true;
   ws.userId = null;
@@ -1336,8 +1450,8 @@ wss.on('connection', (ws, req) => {
       return;
     }
     if (!ws.isAuthenticated) {
-      if (parsed?.type === 'auth' && typeof parsed.token === 'string') {
-        resolveUserFromToken(parsed.token)
+      if (parsed?.type === 'auth' && typeof parsed.ticket === 'string') {
+        resolveWsTicket(parsed.ticket)
           .then((user) => {
             if (!user) return ws.close(4001, 'Authentication failed');
             let count = 0;

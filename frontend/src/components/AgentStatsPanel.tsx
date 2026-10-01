@@ -5,7 +5,6 @@ import { useAuth } from '../context/AuthContext';
 
 const AgentStatsPanel: React.FC = () => {
   const { user } = useAuth();
-  const token = typeof window !== 'undefined' ? (document.cookie.match(/token=([^;]+)/)?.[1] || '') : '';
   const { parsedMessages } = useWebSocket();
 
   // Aggregate agent utilization from live events
