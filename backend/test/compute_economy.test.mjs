@@ -308,16 +308,22 @@ async function seedService(slug = 'research') {
   return getComputeServiceBySlug(slug);
 }
 
-async function makePaidJob({ store, sellerUserId = 'u1', service = null, asset = 'BNB', simulate = false }) {
+// The payer is a customer; the reward recipient is a separate contributor.
+// They must never be the same identity, or the "reward" is the customer
+// regaining their own payment while the platform books it as earned revenue.
+const PAYER_USER_ID = 'customer_p1';
+
+async function makePaidJob({ store, sellerUserId = 'u1', payerUserId = PAYER_USER_ID, service = null, asset = 'BNB', simulate = false }) {
   const svc = service || (await seedService());
-  const quoteData = await generateComputeQuote({ service: svc, asset, userId: sellerUserId });
+  const quoteData = await generateComputeQuote({ service: svc, asset, userId: payerUserId });
   const quote = await prisma.computeQuote.create({
-    data: { ...quoteData, userId: sellerUserId, requestText: 'Produce a DeFi yield analysis for the customer.' },
+    data: { ...quoteData, userId: payerUserId, requestText: 'Produce a DeFi yield analysis for the customer.' },
   });
   const payment = await createPaymentIntentFromQuote({ quote });
   const job = await createComputeJobFromAcceptedQuote({
     quoteId: quote.id,
     sellerUserId,
+    payerUserId,
     inputText: quote.requestText,
   });
   return { svc, quote, payment, job };
@@ -722,10 +728,10 @@ test('P19 expired quotes cannot create jobs; refunded jobs cannot run', async ()
   wireComputeDb(store);
   try {
     const svc = await seedService();
-    const quoteData = await generateComputeQuote({ service: svc, asset: 'BNB', userId: 'u1', nowMs: Date.now() - 60 * 60 * 1000 });
-    const quote = await prisma.computeQuote.create({ data: { ...quoteData, userId: 'u1', requestText: 'old request' } });
+    const quoteData = await generateComputeQuote({ service: svc, asset: 'BNB', userId: PAYER_USER_ID, nowMs: Date.now() - 60 * 60 * 1000 });
+    const quote = await prisma.computeQuote.create({ data: { ...quoteData, userId: PAYER_USER_ID, requestText: 'old request' } });
     await assert.rejects(
-      createComputeJobFromAcceptedQuote({ quoteId: quote.id, sellerUserId: 'u1', inputText: 'old request' }),
+      createComputeJobFromAcceptedQuote({ quoteId: quote.id, sellerUserId: 'u1', payerUserId: PAYER_USER_ID, inputText: 'old request' }),
       (err) => err.status === 410,
     );
 

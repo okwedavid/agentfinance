@@ -9,6 +9,8 @@ import {
   settleReservation,
   releaseReservation,
   findReservationByPayoutId,
+  reverseSettlement,
+  poolFundingComposition,
   demoMode,
   rewardEconomyEnabled,
 } from '../services/rewardService.js';
@@ -203,19 +205,31 @@ function resolveRecipientAddress(user, network, explicitAddress) {
   return profiles?.[network.id] || profiles?.ethereum || user?.walletAddress || '';
 }
 
-function buildPayoutSummary({ payout, signer, network }) {
+export const REWARD_SETTLEMENT_ASSET = 'BNB';
+
+export function assetMatchesRewardSettlementAsset(network) {
+  return String(network?.symbol || '').toUpperCase() === REWARD_SETTLEMENT_ASSET;
+}
+
+function buildPayoutSummary({ payout, signer, network, blockedReason = null }) {
   const lines = [
     `Routing plan prepared for ${payout.amount} ${payout.assetSymbol} on ${network.label}.`,
     `Destination wallet: ${payout.recipientAddress}.`,
   ];
 
   if (signer.treasuryAddress) {
-    lines.push(`Treasury wallet: ${signer.treasuryAddress}.`);
+    lines.push(`Treasury wallet: ${payout.treasuryAddress}.`);
+  }
+
+  if (blockedReason) {
+    lines.push(`Status: blocked. ${blockedReason}`);
+    return lines.map(cleanText).join('\n');
   }
 
   if (payout.status === 'approval_required') {
     lines.push('Status: ready for approval.');
     lines.push('Next step: approve the payout to sign and broadcast the transaction.');
+    lines.push('Approval only broadcasts the transaction; the reward is not settled until a receipt confirms it on-chain.');
   } else if (payout.status === 'blocked') {
     lines.push(`Status: blocked. ${signer.reason}`);
     lines.push('Next step: configure a compatible treasury signer for the selected network, then prepare the payout again.');
@@ -287,8 +301,20 @@ export async function preparePayoutPlan({
   }
   const safeAmount = checked.amount;
 
+  // Cross-asset guard: the reward pool, the user's reward balance and every
+  // settlement record are denominated in BNB. Withdrawing in any other asset
+  // would let BNB-denominated entitlement buy a different token at an implied
+  // rate that this deployment never prices. There is no FX source here, so the
+  // request is recorded but blocked, and it never reserves reward balance.
+  const assetMatches = assetMatchesRewardSettlementAsset(network);
+  const blockedReason = assetMatches
+    ? null
+    : `The reward pool and your reward balance are denominated in ${REWARD_SETTLEMENT_ASSET}, so a `
+      + `${network.symbol} withdrawal cannot be settled from reward value. No conversion rate exists in `
+      + 'this deployment, so no reward balance was reserved. Withdraw on BNB Smart Chain (BSC).';
+
   const signer = getTreasurySignerStatus(network);
-  const status = signer.ready ? 'approval_required' : 'blocked';
+  const status = blockedReason ? 'blocked' : signer.ready ? 'approval_required' : 'blocked';
   const unsignedPayload = await buildUnsignedPayload({
     network,
     recipientAddress: resolvedRecipient,
@@ -308,19 +334,19 @@ export async function preparePayoutPlan({
     approvalToken: randomUUID(),
     unsignedPayload,
     summary: '',
-    error: signer.reason || null,
+    error: blockedReason || signer.reason || null,
   };
 
   // Reward economy: every new withdrawal is blocked unless the requested
   // amount can be atomically reserved against the user's settleable balance.
   // Legacy payouts (pre-economy) have no SettlementRecord and remain fully
   // approvable without this step.
-  if (rewardEconomyEnabled()) {
-    return createPayoutWithReservation({ userId, payoutFields, signer, network });
+  if (rewardEconomyEnabled() && assetMatches) {
+    return createPayoutWithReservation({ userId, payoutFields, signer, network, blockedReason });
   }
 
   const payout = await prisma.payout.create({ data: payoutFields });
-  const summary = buildPayoutSummary({ payout, signer, network });
+  const summary = buildPayoutSummary({ payout, signer, network, blockedReason });
   return prisma.payout.update({
     where: { id: payout.id },
     data: { summary },
@@ -332,7 +358,7 @@ export async function preparePayoutPlan({
  * transaction. If the user lacks enough settleable balance the whole request
  * aborts (no orphan payout row) with a 422.
  */
-async function createPayoutWithReservation({ userId, payoutFields, signer, network }) {
+async function createPayoutWithReservation({ userId, payoutFields, signer, network, blockedReason = null }) {
   return prisma.$transaction(async (tx) => {
     const created = await tx.payout.create({ data: payoutFields });
 
@@ -343,7 +369,7 @@ async function createPayoutWithReservation({ userId, payoutFields, signer, netwo
       note: 'Withdrawal reserved on prepare.',
     });
 
-    const summary = buildPayoutSummary({ payout: created, signer, network });
+    const summary = buildPayoutSummary({ payout: created, signer, network, blockedReason });
     return tx.payout.update({
       where: { id: created.id },
       data: { summary },
@@ -523,6 +549,22 @@ export async function approvePayout({ payoutId, userId, approvalToken, actorRole
   // service only signs/broadcasts when given a verified approval token.
 
   const network = normalizeNetwork(payout.network);
+
+  // Cross-asset guard, re-checked at approval time. Prepare already blocks
+  // non-BNB payouts, but rows written before this guard existed must not be
+  // approvable into a real cross-asset transfer.
+  if (!assetMatchesRewardSettlementAsset(network)) {
+    const blocked = await prisma.payout.update({
+      where: { id: payout.id },
+      data: {
+        status: 'blocked',
+        error: `Reward settlement is denominated in ${REWARD_SETTLEMENT_ASSET}; this payout is in `
+          + `${network.symbol}. No conversion rate exists, so it cannot be broadcast.`,
+      },
+    });
+    return blocked;
+  }
+
   const signer = getTreasurySignerStatus(network);
   if (!signer.ready) {
     const blocked = await prisma.payout.update({
@@ -553,10 +595,10 @@ export async function approvePayout({ payoutId, userId, approvalToken, actorRole
     broadcasted = await broadcastEvmPayout(payout);
   } catch (err) {
     // Preserve the failure instead of leaving an ambiguous pending state.
-    // A settled-once reservation can never re-broadcast because the payout is
-    // now 'failed' (only approval_required payouts can be approved again), so
-    // releasing the reservation is safe: it restores settleable capacity and
-    // never double-settles.
+    // A broadcast that never produced a tx hash cannot settle: the payout is now
+    // 'failed' (only approval_required payouts can be approved again), so
+    // releasing the reservation is safe — it restores settleable capacity and
+    // cannot double-settle.
     await prisma.payout.update({
       where: { id: payout.id },
       data: {
@@ -588,18 +630,17 @@ export async function approvePayout({ payoutId, userId, approvalToken, actorRole
     },
   });
 
-  // Reward economy: mark the reservation settled once the treasury actually
-  // broadcasts. Idempotent — a settle that already happened is returned as-is.
-  const reservation = await findReservationByPayoutId(next.id);
-  if (reservation) {
-    await settleReservation({
-      payoutId: next.id,
-      txHash: next.txHash,
-      settledBy: userId,
-      note: 'Withdrawal settled after broadcast.',
-    });
-  }
-
+  // ECONOMIC TRUTH (phase 0): broadcasting is NOT settlement.
+  //
+  // This used to call settleReservation() the moment the treasury transaction
+  // was submitted, which made "submitted" indistinguishable from "paid". An
+  // ambiguous or dropped transaction permanently debited the user, and because
+  // releaseReservation() no-ops on a SETTLED record the loss could never be
+  // undone.
+  //
+  // The reservation now stays HELD after broadcast and is settled only by
+  // refreshPayoutStatus() once a receipt with status 1 is observed. The reward
+  // economy does not misrepresent a pending transfer as withdrawn money.
   const summary = buildPayoutSummary({ payout: next, signer: { ...signer, treasuryAddress: broadcasted.treasuryAddress }, network });
   return prisma.payout.update({
     where: { id: payout.id },
@@ -643,6 +684,21 @@ export async function rejectPayout({ payoutId, userId, actorRole, reason }) {
   return updated;
 }
 
+/**
+ * Strip the broadcast approval token from any response that leaves the service.
+ *
+ * The token is a bearer credential: whoever holds it can make the treasury sign
+ * and broadcast. It used to be spread across list endpoints (admin list and the
+ * user's own payout list) purely as a UI convenience, so any client that could
+ * read a payout row also held the power to release real funds. Tokens are now
+ * fetched only from the single-payout endpoint and never enumerated.
+ */
+export function redactPayout(payout) {
+  if (!payout || typeof payout !== 'object') return payout;
+  const { approvalToken, ...safe } = payout;
+  return { ...safe, hasApprovalToken: Boolean(approvalToken) };
+}
+
 export async function listPayoutsForAdmin() {
   const rows = await prisma.payout.findMany({
     orderBy: { createdAt: 'desc' },
@@ -655,12 +711,25 @@ export async function listPayoutsForAdmin() {
   });
 
   return rows.map((payout) => ({
-    ...payout,
+    ...redactPayout(payout),
     requesterLabel: payout.user?.role === ROLE_SUPER_ADMIN
       ? 'super-admin'
       : (payout.user?.displayName || payout.user?.username || 'Unknown user'),
     statusMeta: mapPayoutStatus(payout.status),
   }));
+}
+
+/**
+ * Fetch one payout for the approval screen, including its approval token.
+ *
+ * Deliberately narrow: an admin confirming a transfer is the one legitimate
+ * need for the token, and this returns exactly one row rather than leaking a
+ * usable credential through every list endpoint.
+ */
+export async function getPayoutForApproval(payoutId) {
+  const payout = await prisma.payout.findUnique({ where: { id: payoutId } });
+  if (!payout) throw Object.assign(new Error('Payout not found.'), { status: 404 });
+  return payout;
 }
 
 export async function refreshPayoutStatus({ payoutId, userId }) {
@@ -691,31 +760,36 @@ export async function refreshPayoutStatus({ payoutId, userId }) {
     },
   });
 
-  // Reward economy reconciliation on chain result:
+  // Reward economy reconciliation on the on-chain result. Settlement follows
+  // RECEIPT CONFIRMATION, never broadcast:
+  //   - confirmed (receipt status 1): settle now. This is the only path that
+  //     turns a reservation into a real withdrawn asset.
   //   - failed (receipt status 0 => reverted): the treasury got the funds
-  //     back, so release the reservation. Idempotent and never double-counts.
-  //   - confirmed-after-settled mismatch: surfaced to the operator, never a
-  //     silent write.
+  //     back, so the hold is released.
+  //   - a settlement that was already made and is now proven to have reverted
+  //     is REVERSED. Previously this only logged a warning, so a user stayed
+  //     debited for a transfer that never paid out.
   const reservation = await findReservationByPayoutId(payout.id);
   if (reservation) {
-    if (status === 'failed' && reservation.status !== 'RELEASED') {
-      await releaseReservation({
-        payoutId: payout.id,
-        note: 'Reservation released: broadcast did not confirm on-chain.',
-      });
-    } else if (status === 'confirmed' && reservation.status !== 'SETTLED') {
+    if (status === 'confirmed' && reservation.status !== 'SETTLED') {
       await settleReservation({
         payoutId: payout.id,
         txHash: payout.txHash,
         settledBy: 'system',
-        note: 'Withdrawal settled via receipt confirmation.',
+        note: 'Withdrawal settled: on-chain receipt confirmed (status 1).',
       });
     } else if (status === 'failed' && reservation.status === 'SETTLED') {
-      logger.warn(
-        `[rewards] payout ${payout.id} is SETTLED but on-chain receipt is FAILED. ` +
-          'Manual reconciliation required; no automatic reversal performed.',
-        { payoutId: payout.id, txHash: payout.txHash },
-      );
+      await reverseSettlement({
+        payoutId: payout.id,
+        txHash: payout.txHash,
+        reversedBy: 'system',
+        reason: 'On-chain receipt reported status 0 (reverted); the withdrawal never paid out.',
+      });
+    } else if (status === 'failed' && reservation.status !== 'RELEASED' && reservation.status !== 'REVERSED') {
+      await releaseReservation({
+        payoutId: payout.id,
+        note: 'Reservation released: broadcast did not confirm on-chain.',
+      });
     }
   }
 
@@ -735,7 +809,7 @@ export async function listPayouts(userId) {
   });
 
   return rows.map((payout) => ({
-    ...payout,
+    ...redactPayout(payout),
     statusMeta: mapPayoutStatus(payout.status),
   }));
 }
@@ -762,21 +836,31 @@ export function summariseTaskResult(value) {
   return cleanText(JSON.stringify(parsed));
 }
 
-export function payoutRuntimeSnapshot() {
+export async function payoutRuntimeSnapshot() {
   const evm = getTreasurySignerStatus(NETWORKS.ethereum);
   const btc = getTreasurySignerStatus(NETWORKS.bitcoin);
+  const fundingComposition = await poolFundingComposition().catch(() => null);
 
   return {
     rewardEconomy: {
       enabled: rewardEconomyEnabled(),
       demoMode: demoMode(),
     },
+    // Economic truth surfaced wherever withdrawal readiness is reported: the
+    // pool's funding composition decides whether settleable value is backed by
+    // external revenue or by the operator's own money.
+    fundingComposition,
     treasury: {
       evmReady: evm.ready,
       btcReady: btc.ready,
       signerType: evm.signerType,
       treasuryAddress: evm.treasuryAddress || btc.treasuryAddress || null,
       issue: evm.reason || btc.reason || null,
+      // Withdrawals are paid from the operator treasury, never out of money an
+      // agent earned. Stated explicitly wherever the treasury is described.
+      nature:
+        'Operator treasury. Funds settled here are the operator\'s own assets distributed by policy, '
+        + 'not agent-earned income and not agent-attributable external revenue.',
     },
     networks: Object.values(NETWORKS)
       .filter((value, index, list) => list.findIndex((item) => item.id === value.id) === index)

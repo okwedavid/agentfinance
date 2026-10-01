@@ -202,6 +202,33 @@ export function getAgentStatus(agentId) {
   return { ...base, status: 'ACTIVE', reason: 'Executor registered and provider available.' };
 }
 
+// ── Economic capability (derived from reality) ───────────────────────────────
+
+/**
+ * Whether an agent can actually produce externally verified revenue.
+ *
+ * This mirrors the honesty rule the rest of this file already follows: an
+ * agent's *execution* status and its *economic* status are different facts.
+ * An agent can be fully ACTIVE — executor registered, provider reachable, work
+ * delivered — while contributing nothing to verified external revenue, because
+ * the platform has no external payment path at all. Reporting the second state
+ * is what stops an ACTIVE agent from being read as a revenue-generating one.
+ *
+ * Always false on this deployment. Flip it only alongside a verifier outside the
+ * platform's trust boundary.
+ */
+export function getAgentEconomicStatus(agentId) {
+  return {
+    id: agentId,
+    producesExternalRevenue: false,
+    valueTier: 'ACCOUNTING_VALUE',
+    reason:
+      'Delivering work through this agent books a deterministic reward value in the platform '
+      + 'ledger. No external party pays for that work, so no verified external revenue is produced.',
+    externalRevenuePathAvailable: false,
+  };
+}
+
 export function getAgentRuntimeStatus() {
   const required = ['research', 'general', 'content'];
   const statuses = {};
@@ -209,6 +236,10 @@ export function getAgentRuntimeStatus() {
   return {
     agents: statuses,
     activeCount: Object.values(statuses).filter((s) => s.status === 'ACTIVE').length,
+    // Economic state per agent, kept deliberately separate from execution
+    // state: ACTIVE here does NOT mean revenue-generating.
+    economic: Object.fromEntries(required.map((id) => [id, getAgentEconomicStatus(id)])),
+    externalRevenuePathAvailable: false,
   };
 }
 

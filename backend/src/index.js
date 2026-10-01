@@ -44,6 +44,7 @@ import logger from './utils/logger.js';
 import { executeAgentTask } from './services/agentService.js';
 import { fallbackProvider, getProviderSpec, primaryProvider, providerFallbackOrder, providerIsConfigured, providerModel } from './services/llmProvider.js';
 import { computeUserEarnings, earningRateEth } from './services/earningsService.js';
+import { economicCapabilityReport } from './services/moneySemantics.js';
 import { ensureRewardPool } from './services/rewardService.js';
 import { ensureComputeServiceCatalog } from './services/compute/catalogService.js';
 import {
@@ -61,6 +62,7 @@ import {
   approvePayout,
   listPayouts,
   listPayoutsForAdmin,
+  getPayoutForApproval,
   payoutRuntimeSnapshot,
   preparePayoutPlan,
   refreshPayoutStatus,
@@ -406,7 +408,7 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
   }
 
   const user = await prisma.user.findUnique({ where: { id: req.user.sub } }).catch(() => null);
-  const payoutRuntime = payoutRuntimeSnapshot();
+  const payoutRuntime = await payoutRuntimeSnapshot();
   const earnings = await computeUserEarnings(req.user.sub);
 
   res.json({
@@ -423,7 +425,13 @@ app.get('/system/runtime', authMiddleware, async (req, res) => {
     preferredNetwork: user?.preferredNetwork || 'ethereum',
     earnings,
     payoutRuntime,
-    earnings,
+    // What this deployment can and cannot do economically. Served next to the
+    // runtime snapshot so a client never has to infer it from the numbers.
+    economics: economicCapabilityReport({
+      computeEconomyEnabled: process.env.REWARD_ECONOMY_ENABLED !== 'false',
+      computeDemoMode: rewardEconomyEnabled() ? process.env.REWARD_DEMO_MODE === 'true' : false,
+      paymentVerifierConfigured: false,
+    }),
     earningsRateEth: earningRateEth(),
   });
 });
@@ -1136,6 +1144,32 @@ app.get('/payouts/admin/queue', authMiddleware, requireAdmin, async (req, res) =
   } catch (error) {
     logger.error('admin payout queue error', error);
     res.status(500).json({ error: 'Could not load the payout queue.' });
+  }
+});
+
+// The approval token is a bearer credential for treasury broadcast. The queue
+// no longer returns it, so the approval screen fetches exactly one payout here
+// and only when an admin actually opens it. Narrowing the credential from "every
+// row in the queue" to "one row on demand" is the point: previously any client
+// able to read a payout list also held the power to move real funds.
+app.get('/payouts/:id/approval', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const payout = await getPayoutForApproval(req.params.id);
+    res.json({
+      id: payout.id,
+      status: payout.status,
+      network: payout.network,
+      assetSymbol: payout.assetSymbol,
+      amount: payout.amount,
+      recipientAddress: payout.recipientAddress,
+      treasuryAddress: payout.treasuryAddress,
+      txHash: payout.txHash,
+      summary: payout.summary,
+      approvalToken: payout.approvalToken || null,
+    });
+  } catch (error) {
+    logger.error('payout approval detail error', error);
+    res.status(error.status || 500).json({ error: error.message || 'Could not load the payout.' });
   }
 });
 

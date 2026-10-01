@@ -20,6 +20,7 @@ import {
   PROVIDER_ERROR,
   safeMessageFor,
 } from '../services/llmProvider.js';
+import { recordTokenUsage } from '../services/tokenUsage.js';
 
 export const DEFAULT_TASK_TIMEOUT_MS = 120_000;
 export const DEFAULT_PROVIDER_RETRIES = 2;
@@ -358,6 +359,11 @@ export async function runAgent({ action, agentType = 'coordinator', walletAddres
       const result = await attemptProvider(spec, messages, { useTools: spec.toolsEnabled, deadline, signal });
       const usedModel = result.model || model;
       logger.info(`${tag} provider_result=success provider=${id} model=${usedModel || 'unknown'}`);
+      // J1.9: record what this run actually consumed. The provider always
+      // returns usage, but it was previously discarded, leaving TokenUsage
+      // permanently empty and the platform with no cost record for work it
+      // books rewards for. Fire-and-forget: never fail a run over telemetry.
+      void recordTokenUsage({ model: usedModel, usage: result.usage, taskId: taskId || null }).catch(() => {});
       return {
         success: true,
         output: result.content,

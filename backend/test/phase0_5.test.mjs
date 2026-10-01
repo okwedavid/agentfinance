@@ -5,6 +5,8 @@ import prisma from '../src/prismaClient.js';
 import {
   approvePayout,
   buildEvmPayoutTransaction,
+  getPayoutForApproval,
+  listPayouts,
   listPayoutsForAdmin,
   mapPayoutStatus,
   normalizeNetwork,
@@ -434,6 +436,114 @@ test('listPayoutsForAdmin labels the super admin request as super-admin', async 
     };
     const rows = await listPayoutsForAdmin();
     assert.equal(rows[0].requesterLabel, 'super-admin');
+  } finally {
+    restorePrisma(stash);
+  }
+});
+
+test('listPayoutsForAdmin never returns a usable approval token', async () => {
+  const stash = stashPrisma();
+  try {
+    prisma.payout = {
+      findMany: async () => [
+        {
+          id: 'p1',
+          userId: 'u2',
+          network: 'bsc',
+          assetSymbol: 'BNB',
+          amount: '0.01',
+          recipientAddress: ETH_ADDRESS,
+          status: 'approval_required',
+          approvalToken: 'secret-broadcast-token',
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+          user: { id: 'u2', username: 'alice', email: null, displayName: 'Alice', role: 'USER' },
+        },
+      ],
+    };
+    const rows = await listPayoutsForAdmin();
+    // The token authorises signing and broadcasting a real transfer. Any client
+    // that can read the queue must not be able to move the treasury.
+    assert.equal(rows[0].approvalToken, undefined, 'the admin queue must not carry the token');
+    assert.equal(rows[0].hasApprovalToken, true, 'the UI is still told a token exists');
+    assert.equal(JSON.stringify(rows).includes('secret-broadcast-token'), false);
+  } finally {
+    restorePrisma(stash);
+  }
+});
+
+test('a user payout list never returns an approval token', async () => {
+  const stash = stashPrisma();
+  try {
+    prisma.payout = {
+      findMany: async () => [
+        {
+          id: 'p9',
+          userId: 'u1',
+          network: 'bsc',
+          assetSymbol: 'BNB',
+          amount: '0.01',
+          recipientAddress: ETH_ADDRESS,
+          status: 'approval_required',
+          approvalToken: 'secret-broadcast-token',
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+        },
+      ],
+    };
+    const rows = await listPayouts('u1');
+    assert.equal(rows[0].approvalToken, undefined);
+    assert.equal(rows[0].hasApprovalToken, true);
+  } finally {
+    restorePrisma(stash);
+  }
+});
+
+test('getPayoutForApproval returns the single record with its token, and 404s otherwise', async () => {
+  const stash = stashPrisma();
+  try {
+    prisma.payout = {
+      findUnique: async ({ where }) => (
+        where.id === 'p1'
+          ? { id: 'p1', status: 'approval_required', approvalToken: 'tok' }
+          : null
+      ),
+    };
+    const detail = await getPayoutForApproval('p1');
+    assert.equal(detail.approvalToken, 'tok', 'the on-demand approval read is the one place the token is returned');
+    await assert.rejects(getPayoutForApproval('nope'), (err) => err.status === 404);
+  } finally {
+    restorePrisma(stash);
+  }
+});
+
+test('a non-BNB payout cannot be approved into a cross-asset transfer', async () => {
+  const stash = stashPrisma();
+  try {
+    const payout = {
+      id: 'p1',
+      userId: 'u1',
+      network: 'ethereum',
+      assetSymbol: 'ETH',
+      amount: '0.01',
+      recipientAddress: ETH_ADDRESS,
+      status: 'approval_required',
+      approvalToken: 'tok',
+    };
+    prisma.payout = {
+      findUnique: async () => payout,
+      update: async ({ where, data }) => {
+        Object.assign(payout, data);
+        return payout;
+      },
+    };
+    const result = await approvePayout({
+      payoutId: 'p1',
+      userId: 'u2',
+      approvalToken: 'tok',
+      actorRole: ROLE_ADMIN,
+    });
+    assert.equal(result.status, 'blocked');
+    assert.match(String(result.error), /BNB/);
+    assert.equal(result.txHash, undefined, 'nothing may be broadcast for a non-BNB payout');
   } finally {
     restorePrisma(stash);
   }

@@ -69,7 +69,11 @@ export default function LoginPage() {
             A
           </div>
           <h1 className="text-2xl font-bold gradient-text">AgentFinance</h1>
-          <p className="text-gray-400 text-sm mt-1">AI agents that generate income for you</p>
+          {/* J1.8: this line claimed an economic outcome the platform cannot
+              deliver. Agents book a reward value against completed work; no
+              external party pays for that work, so nothing here generates
+              income. Stated as what it actually does. */}
+          <p className="text-gray-400 text-sm mt-1">AI agents that do work and book reward value for it</p>
         </div>
 
         {/* Card */}
@@ -151,11 +155,15 @@ export default function LoginPage() {
           <div className="mt-6 pt-5 border-t border-white/[0.06]">
             <p className="text-gray-600 text-xs text-center mb-3">What you get</p>
             <div className="grid grid-cols-2 gap-2">
+              {/* "Auto earnings" implied money arriving on its own. The
+                  platform books reward value for completed work and pays it
+                  out only from the operator treasury against confirmed
+                  withdrawals, so the label names the mechanism. */}
               {[
-                { icon: '🤖', text: '4 AI agents' },
-                { icon: '📈', text: 'DeFi yields' },
-                { icon: '💰', text: 'Auto earnings' },
-                { icon: '📊', text: 'Analytics' },
+                { icon: '🤖', text: '3 agent roles' },
+                { icon: '📈', text: 'Work analytics' },
+                { icon: '💰', text: 'Reward ledger' },
+                { icon: '📊', text: 'Task history' },
               ].map(f => (
                 <div key={f.text} className="flex items-center gap-2 text-xs text-gray-500">
                   <span>{f.icon}</span> {f.text}

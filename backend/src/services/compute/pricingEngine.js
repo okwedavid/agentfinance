@@ -128,6 +128,38 @@ export function quoteAmountBnbEqualTo(quote, amountWei) {
   return toUnits(amountWei) === toBnbWei(quote.amountWei, quote.asset, quote.priceBnbPerUnit);
 }
 
+/**
+ * Whether the quote's own charged amount still covers the price the server
+ * computed for it.
+ *
+ * The check is deliberately one-directional: for non-BNB assets the pricing
+ * engine rounds the charged amount UP, so the valuation of the charged amount is
+ * always >= the BNB price. Requiring equality here would reject every valid
+ * non-BNB quote, and accepting a shortfall is exactly the tampering this guards
+ * against (a quote whose amountWei was edited downward).
+ *
+ * BNB quotes are exact: the charged amount IS the price.
+ */
+export function quoteAmountCoversPrice(quote) {
+  // priceBnbWei and amountWei are RAW wei integer strings, so they are compared
+  // as BigInt. They must not go through toUnits(), which treats its input as a
+  // decimal token and would scale an already-scaled value by 1e18.
+  const rawPrice = String(quote.priceBnbWei ?? '').trim();
+  if (!/^\d+$/.test(rawPrice)) return false;
+  const priceWei = BigInt(rawPrice);
+  if (priceWei <= 0n) return false;
+
+  let chargedWei;
+  try {
+    chargedWei = toBnbWei(quote.amountWei, quote.asset, quote.priceBnbPerUnit);
+  } catch {
+    // A missing asset reference price makes the charge unverifiable, which is
+    // exactly the case that must not be allowed to proceed.
+    return false;
+  }
+  return chargedWei >= priceWei;
+}
+
 function toFractionRef(value) {
   const s = String(value).trim();
   const [int, frac = ''] = s.split('.');

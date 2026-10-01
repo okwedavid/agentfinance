@@ -20,7 +20,7 @@ const TEMPLATES = [
   "Research today's best DeFi yield opportunities with risks and expected returns.",
   "Check ETH arbitrage opportunities and summarize realistic execution paths.",
   "Write a concise market review thread for today's crypto setup.",
-  "Prepare the safest next execution steps for routing agent earnings to my wallet.",
+  "Summarise my completed tasks this week and the reward value they booked.",
 ];
 
 function tryParse(value: any) {
@@ -237,19 +237,21 @@ export default function DashboardPage() {
     const completed = tasks.filter((task) => task.status === "completed").length;
     const running = tasks.filter((task) => task.status === "running").length;
     const failed = tasks.filter((task) => task.status === "failed").length;
-    // Server-authoritative earnings: prefer runtime.earnings (computed from
-    // distinct persisted completed records) over any client-side estimate.
-    const serverEarnings = runtime?.earnings?.totalEth;
-    const earnings =
-      typeof serverEarnings === "number" && Number.isFinite(serverEarnings)
-        ? serverEarnings.toFixed(4)
-        : (completed * 0.0035).toFixed(4);
+    // J1.8: the server's `earnings` block is a task counter, not ETH income
+    // (see earningsService.js). It is read here only for the completed-task
+    // count, and the client-side 0.0035 fallback is dropped: a hardcoded
+    // client-side money figure is exactly the claim being removed.
+    const serverCompleted = runtime?.earnings?.completedCount;
+    const completedTasks =
+      typeof serverCompleted === "number" && Number.isFinite(serverCompleted)
+        ? serverCompleted
+        : completed;
     return {
       total: tasks.length,
       completed,
+      completedTasks,
       running,
       failed,
-      earnings,
     };
   }, [tasks, runtime?.earnings]);
 
@@ -290,9 +292,13 @@ export default function DashboardPage() {
                 <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Fleet</div>
                 <div className="mt-2 text-lg font-semibold text-white">{runtime?.fleet?.length || 0}</div>
               </div>
+              {/* J1.8: was "Estimated earnings ... ETH", a claim of ETH income
+                  that no code path could deliver. Now the task counter it
+                  actually measures. */}
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Estimated earnings</div>
-                <div className="mt-2 text-lg font-semibold text-white">{stats.earnings} ETH</div>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Tasks completed</div>
+                <div className="mt-2 text-lg font-semibold text-white">{stats.completedTasks}</div>
+                <div className="text-[10px] text-slate-500">reward value, not income</div>
               </div>
             </div>
           </div>

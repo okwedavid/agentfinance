@@ -7,6 +7,7 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { BottomNav, PageFooter, TopNav } from "@/components/layout/Nav";
 import {
   approvePayout,
+  getPayoutApproval,
   getPayouts,
   getRewardBalance,
   getRewardLedger,
@@ -291,9 +292,12 @@ export default function WalletPage() {
   async function approveLatestPayout(payoutId: string) {
     setApprovingId(payoutId);
     try {
-      await approvePayout(payoutId, latestPayout?.approvalToken);
+      // Approval tokens are no longer returned by the payout list; fetch this
+      // one on demand at approval time.
+      const detail = await getPayoutApproval(payoutId);
+      await approvePayout(payoutId, detail?.approvalToken);
       await Promise.all([refreshPayoutsList(), refreshTasks()]);
-      flash("Payout approval submitted.");
+      flash("Payout approval submitted. It counts as settled only after an on-chain receipt confirms.");
     } catch (error: any) {
       flash(error.message || "Could not approve this payout.");
     } finally {
@@ -361,13 +365,32 @@ export default function WalletPage() {
                 )}
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Total earned</div>
+                {/* J1.8: "Total earned" implied the platform had paid this out.
+                    It is reward value booked for completed work, denominated in
+                    BNB because that is the reward asset — no agent-attributable
+                    external revenue sits behind it. */}
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Reward value</div>
                 <div className="mt-2 text-base font-semibold text-white">{reward ? reward.totalEarnedBnb : "—"} BNB</div>
+                <div className="mt-1 text-[11px] text-slate-500">booked for work, not paid income</div>
                 {pendingReward > 0 && (
                   <div className="mt-1 text-[11px] text-cyan-200/80">{reward.pendingRewardBnb} pending funding</div>
                 )}
               </div>
             </div>
+
+            {/* J1.3: state where the pool's funding actually came from, so an
+                operator-subsidised pool can never read as earned revenue. */}
+            {reward?.poolFundingComposition && (
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-slate-400">
+                <div className="font-semibold text-slate-300">Where the pool's funding comes from</div>
+                <div className="mt-2 space-y-1">
+                  <div>Externally verified revenue: {reward.poolFundingComposition.externalRevenueBackedBnb} BNB</div>
+                  <div>Operator funding (operator&apos;s own money, not earned by agents): {reward.poolFundingComposition.operatorSubsidisedBnb} BNB</div>
+                  <div>Test funding: {reward.poolFundingComposition.testFundingBnb} BNB</div>
+                  <div>Unclassified (legacy): {reward.poolFundingComposition.unclassifiedBnb} BNB</div>
+                </div>
+              </div>
+            )}
             {reward?.simulated && (
               <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
                 Demo/simulation mode is enabled on the backend: all reward balances are simulated and payout broadcasting is disabled.
@@ -558,7 +581,7 @@ export default function WalletPage() {
             >
               <h2 className="text-lg font-semibold text-white">Prepare routing plan</h2>
               <p className="mt-2 text-sm leading-7 text-slate-400">
-                Withdrawals draw only from your funded, settleable reward balance — total earned is capped by the funded share of the reward pool.
+                Withdrawals draw only from your funded, settleable reward balance — reward value is capped by the funded share of the reward pool.
               </p>
               <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-2">
@@ -581,7 +604,12 @@ export default function WalletPage() {
               >
                 {routingBusy ? "Preparing routing plan" : `Prepare ${chain.symbol} routing plan`}
               </button>
-              <div className="mt-3 text-xs text-slate-500">The reward pool is BNB-denominated. The reserve is captured at prepare time and released if the payout is rejected or fails.</div>
+              {/* J1.4: settlement now follows the on-chain receipt, so the copy
+                  states when the reserve is actually released. */}
+              <div className="mt-3 text-xs text-slate-500">
+                The reward pool is BNB-denominated. The reserve is captured at prepare time and released if the payout is rejected or fails. A broadcast
+                payout stays reserved until an on-chain receipt confirms it; it is only then counted as withdrawn.
+              </div>
             </motion.section>
 
             <motion.section

@@ -3,9 +3,10 @@ import "../styles/globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 
 export const metadata: Metadata = {
-  title: "AgentFinance - Autonomous Yield Operating System",
-  description: "Deploy AI agents that research, trade, create content, and route earnings from a single live dashboard.",
-  keywords: "AI agents, crypto, DeFi, autonomous agents, income generation",
+  title: "AgentFinance - Autonomous Agent Operating System",
+  description:
+    "Run AI agents that research, analyse, and create content, and track the work they complete and the rewards it earns.",
+  keywords: "AI agents, autonomous agents, agent operations, task automation, rewards",
 };
 
 export const viewport: Viewport = {

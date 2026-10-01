@@ -216,6 +216,14 @@ model RewardPool {
 model PoolFundingEvent {
   id          String    @id @default(cuid())
   sourceType  String
+  // Economic truth (phase 0): where the funding actually came from.
+  //   EXTERNAL_REVENUE - only written by a verified external payment
+  //   OPERATOR_FUNDING - operator's own money (subsidy/capital), NOT earned
+  //   TEST_FUNDING     - seeded for development only
+  //   UNCLASSIFIED     - legacy rows predating the taxonomy, left un-attributed
+  // Existing rows backfill to UNCLASSIFIED so no historical amount is
+  // retroactively re-labelled as real external revenue.
+  fundingClass String    @default("UNCLASSIFIED")
   amountBnb   String
   reference   String?
   status      String    @default("PENDING")
@@ -225,6 +233,8 @@ model PoolFundingEvent {
   note        String?
   meta        Json?
   createdAt   DateTime  @default(now())
+
+  @@index([fundingClass])
 }
 
 model SettlementRecord {
@@ -358,7 +368,8 @@ model ComputeJob {
   id                String   @id @default(cuid())
   quoteId           String
   serviceId         String
-  sellerUserId      String   // reward recipient (contributor); payer differs
+  sellerUserId      String?  // reward recipient (contributor); null = no contributor configured, so no reward is credited
+  payerUserId       String?  // party that paid; must differ from sellerUserId
   inputText         String?  // compute request executed by the fleet
   agent             String   @default("general")
   taskId            String?  // underlying agent Task row (traceability)
@@ -411,10 +422,20 @@ model RevenueEvent {
   monetizerType    String   @default("CUSTOMER_PAYMENT")
   external         Boolean  @default(true)
   simulated        Boolean  @default(false)
+  // Economic truth (phase 0): how this revenue was evidenced.
+  //   SIMULATED          - demo-mode synthetic payer
+  //   OPERATOR_ASSERTED  - operator declared it; self-referential HMAC, NOT
+  //                        independent proof that money was received
+  //   EXTERNAL_VERIFIED  - evidence from outside the platform (none exists yet)
+  // Backfilled from the originating PaymentIntent so history keeps its meaning.
+  // The legacy `external` boolean is retained unchanged: it records the
+  // architecture's intent and is NOT a claim of external verification.
+  verificationMethod String   @default("OPERATOR_ASSERTED")
   status           String   @default("BOOKED")
   createdAt        DateTime @default(now())
 
   @@index([jobId])
+  @@index([verificationMethod])
   @@unique([paymentIntentId])
 }
 

@@ -12,6 +12,7 @@ import {
   getAdminComputeOverview,
   getAdminPayoutQueue,
   getAdminRewardOverview,
+  getPayoutApproval,
   getRuntimeStatus,
   isLoggedIn,
   refundComputePayment,
@@ -93,6 +94,7 @@ export default function AdminPage() {
   const [rewardOverview, setRewardOverview] = useState<any>(null);
   const [fundingBusy, setFundingBusy] = useState(false);
   const [fundingSource, setFundingSource] = useState("PLATFORM_REVENUE");
+  const [fundingClass, setFundingClass] = useState<"OPERATOR_FUNDING" | "TEST_FUNDING">("OPERATOR_FUNDING");
   const [fundingAmount, setFundingAmount] = useState("");
 
   const [computeOverview, setComputeOverview] = useState<any>(null);
@@ -147,8 +149,11 @@ export default function AdminPage() {
     setApproving(null);
     setBusyId(payout.id);
     try {
-      await approvePayout(payout.id, payout.approvalToken);
-      flash("Payout approved and broadcast.");
+      // The approval token is fetched here, for this one payout, at the moment
+      // of approval. It is deliberately absent from the queue listing.
+      const detail = await getPayoutApproval(payout.id);
+      await approvePayout(payout.id, detail?.approvalToken);
+      flash("Payout broadcast submitted. It counts as settled only after an on-chain receipt confirms.");
       await load();
     } catch (error: any) {
       flash(error?.message || "Could not approve this payout.");
@@ -180,8 +185,15 @@ export default function AdminPage() {
     }
     setFundingBusy(true);
     try {
-      const result = await fundRewardPool({ sourceType: fundingSource, amountBnb: amount });
-      flash(`Funding event ${result?.event?.id ? "created" : "submitted"} — confirm it to credit the pool.`);
+      const result = await fundRewardPool({
+        sourceType: fundingSource,
+        amountBnb: amount,
+        fundingClass,
+      });
+      flash(
+        `Funding event created and recorded as ${result?.fundingClass || fundingClass}. `
+        + "Confirm it to credit the pool — that is an accounting credit, not a payment.",
+      );
       setFundingAmount("");
       await load();
     } catch (error: any) {
@@ -333,7 +345,11 @@ export default function AdminPage() {
               <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-3">
                 <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Funded</div>
                 <div className="mt-2 text-lg font-bold text-emerald-100">{rewardOverview.pool.fundedBnb}</div>
-                <div className="text-[11px] text-emerald-200/70">confirmed backing</div>
+                {/* J1.3: "confirmed backing" implied verified revenue. It is
+                    operator-declared funding; the breakdown below says which
+                    parts are externally backed and which are the operator's
+                    own money. */}
+                <div className="text-[11px] text-emerald-200/70">operator-declared</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
                 <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Settleable capacity</div>
@@ -348,7 +364,8 @@ export default function AdminPage() {
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
                 <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Settled</div>
                 <div className="mt-2 text-lg font-bold text-white">{rewardOverview.pool.settledBnb}</div>
-                <div className="text-[11px] text-slate-500">paid out</div>
+                {/* J1.4: settled now means a confirmed on-chain receipt. */}
+                <div className="text-[11px] text-slate-500">receipt-confirmed</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
                 <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">On-chain treasury</div>
@@ -357,8 +374,28 @@ export default function AdminPage() {
               </div>
             </div>
 
+            {/* J1.3: the funding total only becomes interpretable with its
+                composition. A pool funded entirely by operator money must not
+                be readable as earned revenue. */}
+            {rewardOverview.fundingTruth && (
+              <div className="mt-4 rounded-2xl border border-white/8 bg-white/[0.03] p-4 text-xs text-slate-400">
+                <div className="font-semibold text-slate-300">Funding composition</div>
+                <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                  <div>Externally verified revenue: {rewardOverview.fundingTruth.externalRevenueBackedBnb} BNB</div>
+                  <div>Operator funding (own money, not agent-earned): {rewardOverview.fundingTruth.operatorSubsidisedBnb} BNB</div>
+                  <div>Test funding: {rewardOverview.fundingTruth.testFundingBnb} BNB</div>
+                  <div>Unclassified legacy: {rewardOverview.fundingTruth.unclassifiedBnb} BNB</div>
+                </div>
+                <p className="mt-2 leading-6">{rewardOverview.fundingTruth.message}</p>
+              </div>
+            )}
+
             <div className="mt-4 rounded-2xl border border-white/8 bg-white/[0.03] p-4">
               <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Confirm funding</div>
+              {/* J1.3: the operator must declare WHERE the money comes from.
+                  EXTERNAL_REVENUE is deliberately not offered: only a real
+                  external payment can create that class, and an admin form is
+                  an operator declaration, not a payment. */}
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <select
                   value={fundingSource}
@@ -368,6 +405,17 @@ export default function AdminPage() {
                   {(rewardOverview.allowedSourceTypes || []).map((type: string) => (
                     <option key={type} value={type}>{type.replace(/_/g, " ")}</option>
                   ))}
+                </select>
+                <select
+                  value={fundingClass}
+                  onChange={(event) => setFundingClass(event.target.value as "OPERATOR_FUNDING" | "TEST_FUNDING")}
+                  className="input-field sm:w-64"
+                >
+                  {(rewardOverview.allowedFundingClasses || ["OPERATOR_FUNDING", "TEST_FUNDING"])
+                    .filter((cls: string) => cls !== "EXTERNAL_REVENUE")
+                    .map((cls: string) => (
+                      <option key={cls} value={cls}>{cls.replace(/_/g, " ").toLowerCase()}</option>
+                    ))}
                 </select>
                 <input
                   value={fundingAmount}
@@ -384,7 +432,9 @@ export default function AdminPage() {
                 </button>
               </div>
               <div className="mt-2 text-xs leading-6 text-slate-500">
-                Creates a PENDING event; confirm it to credit the pool. Accounting only — no on-chain movement. Funding must be backed by real BNB held by the operator.
+                Creates a PENDING event; confirm it to credit the pool. Accounting only — no on-chain movement. Declaring a funding source is an operator
+                assertion, not independent proof that anyone paid: operator funding is the operator&apos;s own money and was never earned by an agent. Only a
+                verified external payment can create EXTERNAL_REVENUE funding, and this deployment has no external payment path.
               </div>
 
               {rewardOverview.fundingEvents?.length > 0 && (
@@ -392,9 +442,16 @@ export default function AdminPage() {
                   {rewardOverview.fundingEvents.slice(0, 6).map((event: any) => (
                     <div key={event.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
                       <div className="min-w-0">
-                        <div className="text-sm font-medium text-white">{event.sourceType.replace(/_/g, " ")}{event.simulated ? " · simulated" : ""}</div>
+                        <div className="text-sm font-medium text-white">
+                          {event.sourceType.replace(/_/g, " ")}
+                          {event.simulated ? " · simulated" : ""}
+                        </div>
+                        {/* J1.3: each row states its funding class, so history
+                            can never be read as external revenue. */}
                         <div className="truncate text-[11px] text-slate-500">
-                          {event.amountBnb} BNB · {event.status} · {formatTime(event.createdAt)}{event.confirmedAt ? ` · confirmed ${formatTime(event.confirmedAt)}` : ""}
+                          {event.amountBnb} BNB · {String(event.fundingClass || "UNCLASSIFIED").replace(/_/g, " ").toLowerCase()} · {event.status} ·{" "}
+                          {formatTime(event.createdAt)}
+                          {event.confirmedAt ? ` · confirmed ${formatTime(event.confirmedAt)}` : ""}
                         </div>
                       </div>
                       {event.status === "PENDING" && (

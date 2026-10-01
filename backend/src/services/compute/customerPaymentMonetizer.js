@@ -15,6 +15,21 @@
 //   SIMULATED   - COMPUTE_ECONOMY_DEMO_MODE on, any ADMIN. Tagged SIMULATED.
 //   MANUAL_CERT - SUPER_ADMIN + HMAC attestation over "{id}:{amountWei}" using
 //                 COMPUTE_PAYMENT_CERT_SECRET. Production real-money path.
+//
+// ── J1.2 TRUTH CORRECTION ────────────────────────────────────────────────────
+// MANUAL_CERT is an OPERATOR_ASSERTED payment, not externally verified revenue,
+// and the naming never made that obvious. The HMAC proves the operator who owns
+// COMPUTE_PAYMENT_CERT_SECRET signed off — it is a self-referential attestation
+// produced by the same trust domain it purports to confirm. It establishes
+// INTENT, never RECEIPT of funds. It is not evidence that any external actor
+// transferred anything, and it must never be counted as external revenue.
+//
+// The stored value stays MANUAL_CERT for backwards compatibility; the true
+// economic class is derived through VERIFICATION_METHOD so that every caller
+// reads OPERATOR_ASSERTED rather than having to re-derive it (and so that no
+// future reader mistakes the column name for an independent check).
+// EXTERNAL_VERIFIED is reserved for a verifier living outside this platform and
+// is not producible here.
 
 import { createHmac, randomUUID } from 'node:crypto';
 import prisma from '../../prismaClient.js';
@@ -23,11 +38,31 @@ import {
   computeEconomyEnabled,
 } from './config.js';
 import { toUnits } from '../../utils/decimal.js';
+import {
+  VERIFICATION_METHOD,
+  verificationMethodFor,
+  isVerifiedExternalRevenue,
+} from '../moneySemantics.js';
+import { unwindRevenueBookingTx } from './jobService.js';
 
 export const VERIFICATION_TYPE = Object.freeze({
   SIMULATED: 'SIMULATED',
   MANUAL_CERT: 'MANUAL_CERT',
 });
+
+/**
+ * The honest economic class of a stored verification type. Exported so routes
+ * and the revenue service can never accidentally treat MANUAL_CERT as external
+ * proof.
+ */
+export { VERIFICATION_METHOD, verificationMethodFor, isVerifiedExternalRevenue };
+
+/** Human-facing wording for a verification type. Never says "verified payment". */
+export function verificationLabel(verificationType, simulated = false) {
+  return verificationMethodFor(verificationType, simulated) === VERIFICATION_METHOD.SIMULATED
+    ? 'Simulated — no money was transferred'
+    : 'Operator-asserted — the platform owner declared this payment; not independent proof of funds';
+}
 
 export function paymentAttestation(paymentIntent) {
   const secret = (process.env.COMPUTE_PAYMENT_CERT_SECRET || '').trim();
@@ -109,7 +144,12 @@ export function verifyPaymentPolicy({ paymentIntent, actorRole }) {
     if (!computeDemoMode()) {
       return { ok: false, error: 'Simulated payment intents are only permitted in COMPUTE_ECONOMY_DEMO_MODE.', status: 422 };
     }
-    return { ok: true, verificationType: VERIFICATION_TYPE.SIMULATED, simulated: true };
+    return {
+      ok: true,
+      verificationType: VERIFICATION_TYPE.SIMULATED,
+      verificationMethod: VERIFICATION_METHOD.SIMULATED,
+      simulated: true,
+    };
   }
 
   if (actorRole !== 'SUPER_ADMIN') {
@@ -123,24 +163,81 @@ export function verifyPaymentPolicy({ paymentIntent, actorRole }) {
       status: 503,
     };
   }
-  return { ok: true, verificationType: VERIFICATION_TYPE.MANUAL_CERT, simulated: false, attestation };
+  // Note the verdict carries verificationMethod, not just the legacy column
+  // value: the outcome is an operator assertion. Callers must persist
+  // OPERATOR_ASSERTED, never EXTERNAL_VERIFIED.
+  return {
+    ok: true,
+    verificationType: VERIFICATION_TYPE.MANUAL_CERT,
+    verificationMethod: VERIFICATION_METHOD.OPERATOR_ASSERTED,
+    simulated: false,
+    attestation,
+    evidenceNote:
+      'Signed by the platform owner (SUPER_ADMIN). Self-referential attestation: it records operator ' +
+      'intent, not receipt of funds from an external party.',
+  };
 }
 
 // ── Adapter: refund ──────────────────────────────────────────────────────────
 
 /**
- * Refund an un-settled payment intent. Rejected once verified/settled so a
- * refund can never walk back already-booked revenue.
+ * Refund a payment intent and unwind every economic record it created.
+ *
+ * A payment reaches the revenue ledger through two separate tables: the
+ * `PaymentIntent` and the `RevenueEvent` booked when the job started. Refunding
+ * only the intent leaves the booked revenue and the pool funding it produced in
+ * place, so the pool keeps money that was never paid. Any consumed intent is
+ * therefore unwound transactionally, and intents whose job already completed
+ * are refused outright.
  */
-export async function refundPayment({ paymentIntentId, note = null }) {
+export async function refundPayment({ paymentIntentId, note = null, requestedBy = null }) {
   const existing = await prisma.paymentIntent.findUnique({ where: { id: paymentIntentId } });
   if (!existing) throw Object.assign(new Error('Payment intent not found.'), { status: 404 });
-  if (existing.status !== 'PENDING') {
-    throw Object.assign(new Error(`A ${existing.status} payment cannot be refunded.`), { status: 409 });
+  if (existing.status === 'REFUNDED') {
+    // Idempotent: a repeated refund must not unwind a booking twice.
+    return existing;
   }
-  return prisma.paymentIntent.update({
-    where: { id: paymentIntentId },
-    data: { status: 'REFUNDED', note: note || 'Refunded before settlement.' },
+  if (existing.status === 'SETTLED') {
+    throw Object.assign(new Error('A settled payment has already funded settled payouts and cannot be refunded here.'), { status: 409 });
+  }
+
+  // ComputeJob links to the intent through the frozen quote id, which is unique
+  // on PaymentIntent. There is no direct paymentIntentId column on the job.
+  const jobs = await prisma.computeJob.findMany({
+    where: { quoteId: existing.quoteId },
+    select: { id: true, status: true, revenueEventId: true },
+  });
+  if (jobs.some((job) => job.status === 'COMPLETED')) {
+    throw Object.assign(
+      new Error('This payment funded a completed job, so its reward was already credited. Refund is not permitted.'),
+      { status: 409 },
+    );
+  }
+
+  const refundNote = note || 'Refunded before settlement.';
+
+  return prisma.$transaction(async (tx) => {
+    for (const job of jobs) {
+      if (!job.revenueEventId) continue;
+      const unwind = await unwindRevenueBookingTx(tx, {
+        revenueEventId: job.revenueEventId,
+        jobId: job.id,
+        requestedBy,
+        reason: refundNote,
+      });
+      await tx.computeJob.update({
+        where: { id: job.id },
+        data: {
+          revenueEventId: null,
+          failureReason: `${refundNote} Unwound ${unwind?.fundingReturnedBnb || '0'} BNB of pool funding.`,
+        },
+      });
+    }
+
+    return tx.paymentIntent.update({
+      where: { id: paymentIntentId },
+      data: { status: 'REFUNDED', note: refundNote },
+    });
   });
 }
 

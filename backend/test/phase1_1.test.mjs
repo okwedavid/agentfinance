@@ -5,6 +5,7 @@ import {
   computeEarningsFromTasks,
   earningRateEth,
   isEligibleTask,
+  taskUnitRate,
 } from '../src/services/earningsService.js';
 import { normalizeEmailAddress, serializeUser } from '../src/utils/security.js';
 import {
@@ -39,9 +40,16 @@ test('computeEarningsFromTasks counts only eligible completed tasks and computes
   const result = computeEarningsFromTasks(tasks, 0.0035);
   assert.equal(result.completedCount, 2);
   assert.equal(result.eligibleCount, 2);
-  assert.equal(result.rateEth, 0.0035);
-  assert.equal(result.totalEth, 0.007);
-  assert.equal(result.totalWei, 7000000000000000);
+  // Canonical unit is TASK_UNITS, not ETH.
+  assert.equal(result.unit, 'TASK_UNITS');
+  assert.equal(result.isMoney, false);
+  assert.equal(result.activityUnitsPerTask, 0.0035);
+  assert.equal(result.totalActivityUnits, 0.007);
+  // The old ETH fields survive only as visible aliases.
+  assert.equal(result.deprecatedAliases.rateEth, 0.0035);
+  assert.equal(result.deprecatedAliases.totalEth, 0.007);
+  assert.equal(result.deprecatedAliases.totalWei, 7000000000000000);
+  assert.equal(result.totalEth, undefined, 'the misleading field name is no longer at the top level');
   assert.equal(result.lastEligibleAt, '2026-01-03T00:00:00.000Z', 'latest eligible completedAt wins');
 });
 
@@ -50,9 +58,10 @@ test('computeEarningsFromTasks honours the EARNING_RATE_ETH override and the pas
   try {
     process.env.EARNING_RATE_ETH = '0.001';
     assert.equal(earningRateEth(), 0.001);
+    assert.equal(taskUnitRate(), 0.001);
     const tasks = [{ status: 'completed', completedAt: new Date(), result: '{"output":"x"}' }];
-    assert.equal(computeEarningsFromTasks(tasks).totalEth, 0.001, 'defaults to env rate');
-    assert.equal(computeEarningsFromTasks(tasks, 0.5).totalEth, 0.5, 'explicit rate wins over env');
+    assert.equal(computeEarningsFromTasks(tasks).totalActivityUnits, 0.001, 'defaults to env rate');
+    assert.equal(computeEarningsFromTasks(tasks, 0.5).totalActivityUnits, 0.5, 'explicit rate wins over env');
   } finally {
     if (before === undefined) delete process.env.EARNING_RATE_ETH;
     else process.env.EARNING_RATE_ETH = before;

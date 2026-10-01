@@ -31,7 +31,11 @@ export default function AnalyticsPage() {
   const failed     = tasks.filter(t => t.status === 'failed').length;
   const running    = tasks.filter(t => t.status === 'running').length;
   const rate       = tasks.length > 0 ? Math.round(completed / tasks.length * 100) : 0;
-  const earnings   = (completed * 0.0035).toFixed(4);
+  // J1.8: this was a hardcoded client-side "ETH earnings" figure with an
+  // invented $3200 conversion attached. It is a task counter — no ETH is
+  // received or paid out, and the reward economy settles in BNB from the
+  // operator treasury. Renamed so the number cannot be read as money.
+  const taskUnits  = completed;
 
   // Daily breakdown for last N days
   const days: { date: string; label: string; total: number; completed: number; failed: number }[] = [];
@@ -62,7 +66,7 @@ export default function AnalyticsPage() {
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h1 className="text-xl font-bold text-white">Analytics</h1>
-            <p className="text-gray-400 text-sm">Agent performance and earnings history</p>
+            <p className="text-gray-400 text-sm">Agent performance and task history</p>
           </div>
           <div className="flex items-center gap-1 bg-white/[0.03] border border-white/[0.06] rounded-xl p-1">
             {([7, 14, 30] as const).map(d => (
@@ -82,7 +86,7 @@ export default function AnalyticsPage() {
             { icon: '📋', label: 'Total Tasks',   value: tasks.length,   color: 'text-white',        sub: `${running} running` },
             { icon: '✅', label: 'Completed',     value: completed,       color: 'text-emerald-400',  sub: `${rate}% success rate` },
             { icon: '❌', label: 'Failed',        value: failed,          color: 'text-red-400',      sub: `${100 - rate}% failure rate` },
-            { icon: '💰', label: 'Est. Earnings', value: `${earnings} ETH`, color: 'text-amber-400', sub: `≈ $${(parseFloat(earnings) * 3200).toFixed(2)}` },
+            { icon: '🧮', label: 'Completed Tasks', value: taskUnits, color: 'text-amber-400', sub: 'not ETH or income' },
           ].map((s, i) => (
             <div key={s.label} className="glass rounded-2xl p-4 animate-fade-in card-glow"
               style={{ animationDelay: `${i * 60}ms` }}>

@@ -78,7 +78,12 @@ export default function ProfilePage() {
   const failed = tasks.filter((task) => task.status === "failed").length;
   const running = tasks.filter((task) => task.status === "running").length;
   const successRate = tasks.length > 0 ? Math.round((completed / tasks.length) * 100) : 0;
-  const earnings = (completed * 0.0035).toFixed(4);
+  // J1.8: was a hardcoded client-side 0.0035-per-task "ETH earned" figure.
+  // Nothing here is ETH and nothing is earned; withdrawals settle in BNB from
+  // the operator treasury. The task count is the honest figure.
+  const serverCompleted = runtime?.earnings?.completedCount;
+  const completedTasks =
+    typeof serverCompleted === "number" && Number.isFinite(serverCompleted) ? serverCompleted : completed;
 
   const walletProfiles = (user?.walletProfiles || runtime?.walletProfiles || {}) as Record<string, string>;
   const latestPayout = payouts[0];
@@ -88,9 +93,9 @@ export default function ProfilePage() {
       { label: "Total tasks", value: String(tasks.length) },
       { label: "Completed", value: String(completed) },
       { label: "Success rate", value: `${successRate}%` },
-      { label: "Estimated earned", value: `${earnings} ETH` },
+      { label: "Reward value", value: `${completedTasks} task units` },
     ],
-    [completed, earnings, successRate, tasks.length],
+    [completed, completedTasks, successRate, tasks.length],
   );
 
   return (

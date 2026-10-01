@@ -25,6 +25,7 @@ import {
   SOURCE_TYPES,
   demoMode,
 } from '../services/rewardService.js';
+import { FUNDING_CLASS, ECONOMIC_PATH, economicCapabilityReport } from '../services/moneySemantics.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -90,6 +91,19 @@ router.get('/pool', async (req, res) => {
   }
 });
 
+// Declares what this deployment can and cannot do economically. Every field is
+// derived from real configuration, mirroring the agentRegistry.js honesty
+// pattern, so no client has to infer capability from marketing copy.
+router.get('/capabilities', (req, res) => {
+  res.json(
+    economicCapabilityReport({
+      computeEconomyEnabled: process.env.REWARD_ECONOMY_ENABLED !== 'false',
+      computeDemoMode: demoMode(),
+      paymentVerifierConfigured: false,
+    }),
+  );
+});
+
 // ── Admin pool / funding ─────────────────────────────────────────────────────
 
 adminRouter.get('/overview', authMiddleware, requireAdmin, async (req, res) => {
@@ -112,6 +126,19 @@ adminRouter.get('/overview', authMiddleware, requireAdmin, async (req, res) => {
       fundingEvents: funding,
       settlements,
       allowedSourceTypes: SOURCE_TYPES,
+      allowedFundingClasses: Object.values(FUNDING_CLASS),
+      // Stated at the top level so the admin screen can never present operator
+      // money as revenue by omission.
+      fundingTruth: {
+        externalRevenueBackedBnb: pool.externalRevenueBackedBnb,
+        operatorSubsidisedBnb: pool.operatorSubsidisedBnb,
+        testFundingBnb: pool.fundingComposition.testFundingBnb,
+        unclassifiedBnb: pool.fundingComposition.unclassifiedBnb,
+        message:
+          'Confirming a funding event increases the pool accounting total only. It is not evidence '
+          + 'that any external party paid. Only EXTERNAL_REVENUE funding is externally backed, and '
+          + 'an operator cannot self-declare that class.',
+      },
       demoMode: demoMode(),
     });
   } catch (error) {
@@ -121,15 +148,22 @@ adminRouter.get('/overview', authMiddleware, requireAdmin, async (req, res) => {
 
 adminRouter.post('/fund', authMiddleware, requireAdmin, async (req, res) => {
   try {
+    // J1.3: the operator must state WHERE the money comes from. Crediting the
+    // pool is a declaration, not a payment, so the funding class travels with
+    // the event forever. EXTERNAL_REVENUE is rejected in normaliseFundingClass:
+    // only a real external payment can claim that, and an admin form cannot.
     const event = await createFundingEvent({
       sourceType: req.body.sourceType,
       amountBnb: req.body.amountBnb,
       reference: req.body.reference,
       note: req.body.note,
+      fundingClass: req.body.fundingClass,
     });
     res.status(201).json({
       event,
-      note: 'Funding event created as PENDING. Confirm it to credit the pool (accounting only; on-chain funds remain operator-controlled).',
+      fundingClass: event.fundingClass,
+      note: 'Funding event created as PENDING. Confirm it to credit the pool (accounting only; on-chain funds remain operator-controlled). '
+        + `Recorded as ${event.fundingClass}: this is a declaration by the operator, not independently verified revenue.`,
     });
   } catch (error) {
     handle(res, error);

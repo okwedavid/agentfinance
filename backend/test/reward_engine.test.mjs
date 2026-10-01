@@ -39,6 +39,7 @@ function makeStore() {
     settlementRecord: { rows: new Map() },
     poolFundingEvent: { rows: new Map() },
     payout: { rows: new Map() },
+    tokenUsage: { rows: [] },
   };
   return store;
 }
@@ -122,6 +123,14 @@ function makeDb(store) {
       },
       findMany: async ({ take = 50 } = {}) => [...store.settlementRecord.rows.values()].slice(0, take),
     },
+    tokenUsage: {
+      create: async ({ data }) => {
+        const row = { ...data, id: data.id || nextId(), createdAt: new Date().toISOString() };
+        store.tokenUsage.rows.push(row);
+        return row;
+      },
+      findMany: async ({ take = 50 } = {}) => store.tokenUsage.rows.slice(0, take),
+    },
     poolFundingEvent: {
       findUnique: async ({ where }) =>
         [...store.poolFundingEvent.rows.values()].find((r) => r.id === where.id) || null,
@@ -136,7 +145,14 @@ function makeDb(store) {
         store.poolFundingEvent.rows.set(where.id, next);
         return next;
       },
-      findMany: async ({ take = 50 } = {}) => [...store.poolFundingEvent.rows.values()].slice(0, take),
+      // Supports the where/select shape used by poolFundingComposition().
+      findMany: async ({ where = {}, take = 50 } = {}) => {
+        let rows = [...store.poolFundingEvent.rows.values()];
+        for (const [key, want] of Object.entries(where)) {
+          rows = rows.filter((r) => r[key] === want);
+        }
+        return rows.slice(0, take);
+      },
     },
     payout: {
       findUnique: async ({ where }) => store.payout.rows.get(where.id) || null,

@@ -17,6 +17,11 @@ import {
 } from './config.js';
 import { verifyPaymentPolicy } from './customerPaymentMonetizer.js';
 import { fundPoolFromRevenueTx } from '../rewardService.js';
+import {
+  VERIFICATION_METHOD,
+  verificationMethodFor,
+  isVerifiedExternalRevenue,
+} from '../moneySemantics.js';
 
 const TX_OPTIONS = {
   isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -81,6 +86,14 @@ export async function bookRevenueFromVerifiedPayment({ paymentIntentId, requeste
     const platformAssetWei = amountAssetWei - rewardFundingAssetWei;
 
     let revenueEvent;
+    // Derive the true verification method from the verdict (and legacy type) so
+    // history reflects reality: MANUAL_CERT -> OPERATOR_ASSERTED, SIMULATED ->
+    // SIMULATED, and EXTERNAL_VERIFIED is never produced here.
+    const methodFromVerdict = verdict.verificationMethod || verificationMethodFor(verdict.verificationType, simulated);
+    const verificationMethod = methodFromVerdict === VERIFICATION_METHOD.EXTERNAL_VERIFIED
+      ? VERIFICATION_METHOD.OPERATOR_ASSERTED
+      : methodFromVerdict;
+
     try {
       revenueEvent = await tx.revenueEvent.create({
         data: {
@@ -93,6 +106,7 @@ export async function bookRevenueFromVerifiedPayment({ paymentIntentId, requeste
           monetizerType: 'CUSTOMER_PAYMENT',
           external: true,
           simulated,
+          verificationMethod,
           status: 'BOOKED',
         },
       });
@@ -135,7 +149,7 @@ export async function bookRevenueFromVerifiedPayment({ paymentIntentId, requeste
       reference: revenueEvent.id,
       simulated,
       confirmedBy: requestedBy,
-      note: 'Verified compute revenue -> reward funding.',
+      note: 'Compute revenue declared by an operator -> reward funding.',
     });
 
     await tx.computeJob.update({
@@ -154,7 +168,8 @@ export async function bookRevenueFromVerifiedPayment({ paymentIntentId, requeste
         verifiedAt: new Date(),
         verifiedBy: requestedBy,
         settledAt: new Date(),
-        note: `Verified via ${verdict.verificationType}.`,
+        // Deliberately not the word "verified": the note states who attested it.
+        note: `Operator-asserted via ${verdict.verificationType}.`,
       },
     });
 
@@ -170,6 +185,8 @@ export async function bookRevenueFromVerifiedPayment({ paymentIntentId, requeste
       rewardFundingBnb: fromUnits(rewardFundingWei, 8),
       platformBnb: fromUnits(platformWei, 8),
       simulated,
+      verificationMethod,
+      isExternalVerifiedRevenue: isVerifiedExternalRevenue(verificationMethod),
       settled,
       idempotent: false,
     };
@@ -197,12 +214,23 @@ export function computeEconomySummary({ revenueEvents, allocations, computeJobs,
   const events = revenueEvents || [];
   const rewards = computeRewardEvents || [];
 
-  const realEvents = events.filter((e) => !e.simulated);
   const simulatedEvents = events.filter((e) => e.simulated);
+  const realEvents = events.filter((e) => !e.simulated);
 
   const realRevenueWei = rawWeiRowsSum(realEvents);
   const simulatedRevenueWei = rawWeiRowsSum(simulatedEvents);
   const totalRevenueWei = realRevenueWei + simulatedRevenueWei;
+
+  // Split "real" revenue by how it was actually evidenced. Every real event in
+  // this deployment is OPERATOR_ASSERTED; externalVerifiedRevenueBnb stays at
+  // zero until a genuine external verifier exists. Reporting the split makes it
+  // impossible to read a nonzero operator-asserted figure as real earnings.
+  const realExternalVerifiedWei = rawWeiRowsSum(
+    realEvents.filter((e) => verificationMethodFor(e.verificationMethod, e.simulated) === VERIFICATION_METHOD.EXTERNAL_VERIFIED),
+  );
+  const realOperatorAssertedWei = rawWeiRowsSum(
+    realEvents.filter((e) => verificationMethodFor(e.verificationMethod, e.simulated) !== VERIFICATION_METHOD.EXTERNAL_VERIFIED),
+  );
 
   const rewardFundingWei = rawWeiRowsSum((allocations || []).filter((a) => a.allocationType === 'REWARD_FUNDING' && !a.simulated));
   const simulatedRewardFundingWei = rawWeiRowsSum((allocations || []).filter((a) => a.allocationType === 'REWARD_FUNDING' && a.simulated));
@@ -218,6 +246,15 @@ export function computeEconomySummary({ revenueEvents, allocations, computeJobs,
     realRevenueBnb: fromUnits(realRevenueWei, 8),
     simulatedRevenueBnb: fromUnits(simulatedRevenueWei, 8),
     totalRevenueBnb: fromUnits(totalRevenueWei, 8),
+    // How the "real" figure above breaks down. These are the numbers that must
+    // never be collapsed into a single "revenue" total.
+    realOperatorAssertedRevenueBnb: fromUnits(realOperatorAssertedWei, 8),
+    realExternalVerifiedRevenueBnb: fromUnits(realExternalVerifiedWei, 8),
+    revenueEvidenceNote:
+      'realRevenueBnb is money an operator declared was received; it is not independently ' +
+      'verified. realExternalVerifiedRevenueBnb is 0 on this deployment because no external ' +
+      'payment verifier is configured. Treat operator-asserted revenue as a declared figure.',
+    realRevenueIsExternallyVerified: realRevenueWei > 0n && realRevenueWei === realExternalVerifiedWei,
     realRewardFundingBnb: fromUnits(rewardFundingWei, 8),
     simulatedRewardFundingBnb: fromUnits(simulatedRewardFundingWei, 8),
     platformBnb: fromUnits(platformWei, 8),

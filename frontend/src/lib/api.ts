@@ -204,6 +204,18 @@ export async function getPayouts() {
   return Array.isArray(data) ? data : [];
 }
 
+/**
+ * Fetch the approval token for exactly one payout.
+ *
+ * The admin queue and the user's payout list no longer return approval tokens:
+ * the token is a bearer credential for treasury broadcast, so spreading it
+ * across list responses meant any client that could read a payout row could
+ * also move real funds. The approval screen now requests it on demand.
+ */
+export async function getPayoutApproval(payoutId: string) {
+  return apiFetch(`/payouts/${payoutId}/approval`);
+}
+
 export async function approvePayout(payoutId: string, approvalToken?: string) {
   return apiFetch(`/payouts/${payoutId}/approve`, {
     method: 'POST',
@@ -343,6 +355,12 @@ export async function fundRewardPool(input: {
   amountBnb: string;
   reference?: string | null;
   note?: string | null;
+  /**
+   * Declares where the money comes from. EXTERNAL_REVENUE is rejected by the
+   * backend for operator requests: only a verified external payment can create
+   * that class.
+   */
+  fundingClass?: "OPERATOR_FUNDING" | "TEST_FUNDING";
 }) {
   return apiFetch('/api/admin/rewards/fund', {
     method: 'POST',
