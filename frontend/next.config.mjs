@@ -21,12 +21,21 @@ const wsOrigin = (process.env.NEXT_PUBLIC_WS_URL || "").trim().replace(/\/+$/, "
 // WebSocket origins baked in at build time; scripts/styles fall back to
 // 'unsafe-inline' to keep Next.js's bootstrapping and third-party widgets
 // working while every other source stays locked to 'self'.
+// Google Fonts is loaded by the document <link> in app/layout.tsx.
+// Both origins are needed and are easy to conflate:
+//   fonts.googleapis.com serves the stylesheet  -> style-src
+//   fonts.gstatic.com  serves the actual .woff2  -> font-src
+// Allowing only one leaves the console full of CSP violations and the type
+// silently falling back to a system font.
+const FONT_STYLE_ORIGIN = "https://fonts.googleapis.com";
+const FONT_FILE_ORIGIN = "https://fonts.gstatic.com";
+
 const csp = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
+  `style-src 'self' 'unsafe-inline' ${FONT_STYLE_ORIGIN}`,
   "img-src 'self' data: blob: https:",
-  "font-src 'self' data:",
+  `font-src 'self' data: ${FONT_FILE_ORIGIN}`,
   `connect-src 'self' ${[apiOrigin, wsOrigin].filter(Boolean).join(" ")}`,
   "object-src 'none'",
   "base-uri 'self'",
