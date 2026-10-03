@@ -250,7 +250,21 @@ export function assertOAuthConfiguration() {
       );
     }
 
-    loggerSafe(`OAuth ${provider.id}: ACTIVE callback=${redirectUri}`);
+    // Log the exact pair an operator must reconcile against the provider console.
+    //
+    // The single most common OAuth failure is `Error 400: redirect_uri_mismatch`,
+    // which Google raises when the redirect_uri we send is not registered for THIS
+    // client id in the provider's console. That mismatch is invisible from inside
+    // the server: our configuration is internally consistent, so no startup check
+    // can detect it. Printing both values at boot turns a confusing runtime error
+    // into a copy-and-compare task.
+    //
+    // The client id is a PUBLIC identifier (it appears in the authorization URL
+    // the browser visits). The client SECRET is never printed.
+    loggerSafe(`OAuth ${provider.id}: ACTIVE`);
+    loggerSafe(`  client_id    = ${String(process.env[provider.clientIdEnv]).trim()}`);
+    loggerSafe(`  redirect_uri = ${redirectUri}`);
+    loggerSafe(`  register this exact redirect_uri for this exact client_id in the provider console`);
   }
 
   for (const warning of warnings) loggerSafe(warning);
