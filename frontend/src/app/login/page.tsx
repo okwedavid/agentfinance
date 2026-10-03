@@ -21,11 +21,15 @@ export default function LoginPage() {
   const [password, setPass]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
-  const [providers, setProviders] = useState<OAuthProviderInfo[]>([]);
+  // `null` means "not loaded yet", which is distinct from an empty list. The
+  // previous code collapsed both, so a failed fetch and a deployment with no
+  // providers rendered as the same blank space.
+  const [providers, setProviders] = useState<OAuthProviderInfo[] | null>(null);
+  const [providersError, setProvidersError] = useState<string | null>(null);
 
   // Availability comes from the backend, never from a hardcoded list here.
-  const activeProviders = providers.filter((p) => p.available);
-  const unavailableProviders = providers.filter((p) => !p.available);
+  const activeProviders = (providers || []).filter((p) => p.available);
+  const unavailableProviders = (providers || []).filter((p) => !p.available);
 
   // Send an already-authenticated visitor onward — but only on a CONFIRMED
   // session, and only after the auth check has actually completed. The previous
@@ -52,14 +56,22 @@ export default function LoginPage() {
   }
 
   useEffect(() => {
+    let cancelled = false;
     getOAuthProviders()
       .then((list) => {
+        if (cancelled) return;
         const order = ["google", "facebook", "x"];
-        setProviders(
-          [...list].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)),
-        );
+        setProviders([...list].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)));
+        setProvidersError(null);
       })
-      .catch(() => setProviders([]));
+      .catch((e) => {
+        // Surface the reason instead of rendering an empty section that looks
+        // identical to "this deployment has no social login configured".
+        if (cancelled) return;
+        setProviders([]);
+        setProvidersError(e?.message || "Could not reach the sign-in service.");
+      });
+    return () => { cancelled = true; };
   }, []);
 
   // Surface an OAuth failure the backend redirected here with, instead of
@@ -169,16 +181,15 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Only providers the backend reports as ACTIVE are offered as a
-              working sign-in. Facebook and X have no credentials configured in
-              this deployment, and the previous UI rendered all three as clickable
-              buttons regardless — advertising a capability that does not exist
-              and failing at the click. */}
+          {/* Only providers the backend reports as ACTIVE are offered as a working
+              sign-in. Facebook and X have no credentials in this deployment, so
+              they are listed as unavailable rather than rendered as buttons that
+              would fail at the click. */}
           {activeProviders.length > 0 && (
             <>
               <div className="mt-5 flex items-center gap-3 text-[11px] uppercase tracking-[0.2em] text-gray-600">
                 <span className="h-px flex-1 bg-white/[0.06]" />
-                <span>Do you already have an account?</span>
+                <span>Or continue with</span>
                 <span className="h-px flex-1 bg-white/[0.06]" />
               </div>
               <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(activeProviders.length, 3)}, minmax(0, 1fr))` }}>
@@ -197,6 +208,15 @@ export default function LoginPage() {
             <p className="mt-4 text-center text-[11px] leading-5 text-gray-600">
               Not available: {unavailableProviders.map((p) => p.displayName).join(", ")}.{" "}
               These sign-in methods are not configured on this deployment.
+            </p>
+          )}
+
+          {/* A failed lookup must be visibly different from "nothing is
+              configured", otherwise the section is simply blank and the cause is
+              unknowable from the UI. */}
+          {providersError && (
+            <p className="mt-4 text-center text-[11px] leading-5 text-amber-300/80">
+              Social sign-in is temporarily unavailable: {providersError}
             </p>
           )}
 

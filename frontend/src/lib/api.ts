@@ -334,25 +334,25 @@ export interface OAuthProviderInfo {
  * login UI must never present a provider as working on the strength of a hardcoded
  * list: Facebook and X have no credentials configured in this deployment, and
  * offering them anyway would be advertising a capability that does not exist.
+ *
+ * On failure this THROWS rather than returning an empty list. It previously
+ * swallowed the error and returned [], which the login page turned into "render
+ * no provider buttons and say nothing" — a silent blank section that is
+ * indistinguishable from "no providers are configured". A visible failure is
+ * diagnosable; a swallowed one is not.
  */
 export async function getOAuthProviders(): Promise<OAuthProviderInfo[]> {
-  try {
-    const data = await apiFetch('/auth/oauth/providers');
-    const list = Array.isArray(data) ? data : (Array.isArray(data?.providers) ? data.providers : []);
-    return list
-      .filter((p: any) => p && typeof p.id === 'string')
-      .map((p: any) => ({
-        id: p.id,
-        displayName: p.displayName || p.id,
-        available: p.available === true || p.configured === true,
-        unavailableReason: p.unavailableReason ?? (p.configured === true ? null : 'CLIENT_CREDENTIALS_NOT_CONFIGURED'),
-        requiresPkce: p.requiresPkce === true,
-      }));
-  } catch {
-    // Unreachable backend: report every provider unavailable rather than
-    // guessing, so the UI never implies a working sign-in.
-    return [];
-  }
+  const data = await apiFetch('/auth/oauth/providers');
+  const list = Array.isArray(data) ? data : (Array.isArray(data?.providers) ? data.providers : []);
+  return list
+    .filter((p: any) => p && typeof p.id === 'string')
+    .map((p: any) => ({
+      id: p.id,
+      displayName: p.displayName || p.id,
+      available: p.available === true || p.configured === true,
+      unavailableReason: p.unavailableReason ?? (p.configured === true ? null : 'CLIENT_CREDENTIALS_NOT_CONFIGURED'),
+      requiresPkce: p.requiresPkce === true,
+    }));
 }
 
 export async function getAnalyticsHistory(limit = 20, offset = 0) {
