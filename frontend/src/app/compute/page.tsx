@@ -10,7 +10,6 @@ import {
   getComputeJobDetail,
   getComputeJobs,
   getComputeServices,
-  isLoggedIn,
   runComputeJob,
 } from "@/lib/api";
 
@@ -40,7 +39,7 @@ function formatTime(value?: string | null) {
 }
 
 export default function ComputePage() {
-  const { user } = useAuth();
+  const { user, status: authStatus } = useAuth();
   const [services, setServices] = useState<any[]>([]);
   const [demoMode, setDemoMode] = useState(false);
   const [jobs, setJobs] = useState<any[]>([]);
@@ -64,12 +63,11 @@ export default function ComputePage() {
   }, [selected]);
 
   useEffect(() => {
-    if (!isLoggedIn()) {
-      window.location.href = "/login";
-      return;
-    }
+    // Data loads only on a confirmed session; the redirect guard lives in
+    // ProtectedLayoutClient and uses the client router.
+    if (authStatus !== "AUTHENTICATED") return;
     void load().finally(() => setLoading(false));
-  }, [load]);
+  }, [authStatus, load]);
 
   function flash(text: string) {
     setMessage(text);

@@ -17,9 +17,7 @@ import assert from 'node:assert/strict';
 
 import {
   SESSION_COOKIE_NAME,
-  SESSION_MARKER_COOKIE,
   buildSessionCookie,
-  buildSessionMarkerCookie,
   sessionCookieOptions,
   SESSION_MAX_AGE_SECONDS,
 } from '../src/services/sessionCookie.js';
@@ -33,10 +31,16 @@ const UNAUTHENTICATED = 'UNAUTHENTICATED';
 /**
  * Minimal in-memory session store with a controllable /auth/me.
  *
- * `getMe` is injectable so a test can model: instant success, slow success, 401,
+ * Mirrors AuthContext.refresh() EXACTLY as it now behaves: it always asks the
+ * server. There is no client-side pre-check, because none is possible: the
+ * session cookie is HttpOnly and set on the backend's host, so the frontend page
+ * cannot observe it. An earlier revision short-circuited on a "marker" cookie the
+ * frontend could never see, which logged the user out on every navigation.
+ *
+ * `getMe` is injectable so a test can model instant success, slow success, 401,
  * and a 200 carrying an unusable payload.
  */
-function createAuth({ markerPresent = true, getMe } = {}) {
+function createAuth({ getMe } = {}) {
   const state = { user: null, status: AUTH_CHECKING, checkId: 0 };
   const listeners = [];
   const emit = () => listeners.forEach((fn) => fn({ ...state }));
@@ -44,21 +48,11 @@ function createAuth({ markerPresent = true, getMe } = {}) {
   return {
     state,
     subscribe(fn) { listeners.push(fn); return () => listeners.splice(listeners.indexOf(fn), 1); },
-    isLoggedIn: () => markerPresent,
     getMe,
     /** Mirrors AuthContext.refresh(). */
     async refresh() {
       const checkId = ++state.checkId;
       const current = checkId;
-
-      if (!markerPresent) {
-        if (current === state.checkId) {
-          state.user = null;
-          state.status = UNAUTHENTICATED;
-          emit();
-        }
-        return;
-      }
 
       try {
         const me = await getMe();
@@ -78,7 +72,6 @@ function createAuth({ markerPresent = true, getMe } = {}) {
       }
       emit();
     },
-    setMarker(v) { markerPresent = v; },
   };
 }
 
@@ -205,29 +198,46 @@ test('a 200 with an unusable payload is not treated as a session', async () => {
   assert.equal(auth.state.status, UNAUTHENTICATED, 'a payload with no id cannot authenticate');
 });
 
-test('an absent marker cookie resolves to UNAUTHENTICATED without a round trip', async () => {
-  let called = false;
+test('the frontend always asks the server, never a client-side cookie signal', async () => {
+  // The regression this replaces: refresh() short-circuited when a client-side
+  // "is there a session?" check returned false, never called /auth/me, and so
+  // reported UNAUTHENTICATED on every page load. The session cookie is HttpOnly
+  // AND set on the backend host, so the frontend cannot observe it in principle.
+  let calls = 0;
   const auth = createAuth({
-    markerPresent: false,
-    getMe: async () => { called = true; return { id: 'u1' }; },
+    getMe: async () => { calls += 1; return { id: 'u1', username: 'alice' }; },
   });
   await auth.refresh();
-  assert.equal(auth.state.status, UNAUTHENTICATED);
-  assert.equal(called, false, 'no session is possible, so no request is spent');
+  assert.equal(calls, 1, '/auth/me is consulted exactly once');
+  assert.equal(auth.state.status, AUTHENTICATED);
 });
 
-test('the marker cookie grants nothing on its own', () => {
-  // The marker is readable by script and therefore forgeable. The server must
-  // never treat it as proof. This is asserted structurally: the HttpOnly session
-  // cookie is a separate cookie carrying the actual credential.
-  const marker = buildSessionMarkerCookie(true);
-  assert.doesNotMatch(marker, /HttpOnly/);
-  assert.match(marker, new RegExp(`^${SESSION_MARKER_COOKIE}=`));
+test('navigating between pages does not re-resolve the session as signed out', async () => {
+  // The reported symptom: signed in on the dashboard, navigate to another page,
+  // the whole app reloads and lands on /login. Each page used to run its own
+  // guard with a hard window.location redirect, so any client-side cookie
+  // signal decided the outcome.
+  const auth = createAuth({ getMe: async () => ({ id: 'u1' }) });
+  await auth.refresh();
+  assert.equal(auth.state.status, AUTHENTICATED);
 
+  // Simulate a route change: the store is shared and persists, so the guard sees
+  // the same confirmed state rather than re-guessing.
+  for (const route of ['/wallet', '/analytics', '/profile', '/dashboard']) {
+    assert.equal(guardAction(auth.state.status, isPublicPathForTest(route)), 'RENDER', `${route} renders`);
+  }
+});
+
+function isPublicPathForTest(pathname) {
+  return ['/login', '/register', '/auth'].some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+test('the only session cookie is HttpOnly and unobservable to script', () => {
+  // Structural guarantee: there is exactly one credential and script cannot read
+  // it, so the frontend has nothing to sniff and must ask the server.
   const session = buildSessionCookie('real-jwt');
   assert.match(session, new RegExp(`^${SESSION_COOKIE_NAME}=real-jwt`));
   assert.match(session, /HttpOnly/);
-  assert.ok(!session.includes(SESSION_MARKER_COOKIE), 'the marker is a distinct cookie');
 });
 
 test('logout invalidates in-flight checks so a stale response cannot resurrect the session', async () => {
@@ -273,12 +283,11 @@ test('SameSite=None is always paired with Secure', () => {
   assert.match(raw, /Secure/);
 });
 
-test('the session token is never placed in a URL by the callback', () => {
-  // Structural guarantee, checked at the cookie layer: the credential has one
-  // transport (a Set-Cookie header) and the OAuth redirect carries none.
+test('the session credential has exactly one transport: a Set-Cookie header', () => {
+  // The callback places no credential in the URL. The session cookie is the only
+  // place the token exists client-side, and it is HttpOnly so script cannot read
+  // it and no other cookie can leak it.
   const raw = buildSessionCookie('super-secret-jwt');
-  assert.ok(raw.includes('super-secret-jwt'));
-  // The marker cookie never carries the token, so a page that can read cookies
-  // still cannot read the session.
-  assert.ok(!buildSessionMarkerCookie(true).includes('super-secret-jwt'));
+  assert.ok(raw.includes('super-secret-jwt'), 'the token rides in the cookie');
+  assert.match(raw, /HttpOnly/, 'and script cannot read it');
 });

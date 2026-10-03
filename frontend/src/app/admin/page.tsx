@@ -14,7 +14,6 @@ import {
   getAdminRewardOverview,
   getPayoutApproval,
   getRuntimeStatus,
-  isLoggedIn,
   refundComputePayment,
   rejectPayout,
   verifyComputePayment,
@@ -82,7 +81,7 @@ function StatusPill({ status }: { status?: string }) {
 }
 
 export default function AdminPage() {
-  const { user, refresh, isAdmin, isSuperAdmin } = useAuth();
+  const { user, refresh, isAdmin, isSuperAdmin, status: authStatus } = useAuth();
   const [queue, setQueue] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -123,12 +122,12 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (!isLoggedIn()) {
-      window.location.href = "/login";
-      return;
-    }
+    // Gate DATA loading on a confirmed session. The redirect guard lives in
+    // ProtectedLayoutClient (root layout) and uses the client router, so moving
+    // between pages no longer hard-reloads the app.
+    if (authStatus !== "AUTHENTICATED") return;
     void Promise.all([load(), refresh(), getRuntimeStatus().catch(() => null)]);
-  }, []);
+  }, [authStatus]);
 
   const onSocketEvent = useMemo(
     () => async (event: any) => {

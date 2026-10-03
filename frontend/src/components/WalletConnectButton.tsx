@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { API_URL } from '@/lib/env';
-import { isLoggedIn } from '@/lib/api';
 
 export default function WalletConnectButton() {
   const [addr, setAddr] = useState<string | null>(null);
@@ -16,9 +15,8 @@ export default function WalletConnectButton() {
   }, []);
 
   async function saveWalletToBackend(address: string) {
-    // The session is an HttpOnly cookie; the page cannot read it and must not
-    // try. credentials:'include' is what makes the browser attach it.
-    if (!isLoggedIn()) return;
+    // The session is an HttpOnly cookie on the backend host, so the page cannot
+    // read it and must not try. credentials:'include' is what attaches it.
     setSaving(true);
     try {
       await fetch(`${API_URL}/auth/wallet`, {

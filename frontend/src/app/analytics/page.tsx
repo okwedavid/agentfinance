@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { isLoggedIn, getTasks, API_BASE } from "@/lib/api";
+import { getTasks, API_BASE } from "@/lib/api";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { TopNav, BottomNav, PageFooter } from "@/components/layout/Nav";
 import Link from "next/link";
@@ -15,16 +15,19 @@ function Bar({ pct, color }: { pct: number; color: string }) {
 }
 
 export default function AnalyticsPage() {
-  const { user }              = useAuth();
+  const { user, status: authStatus } = useAuth();
   const [tasks, setTasks]     = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [range, setRange]     = useState<7 | 14 | 30>(7);
   const { connectionStatus: wsStatus }  = useWebSocket();
 
   useEffect(() => {
-    if (!isLoggedIn()) { window.location.href = '/login'; return; }
+    // Data loads only on a confirmed session. The redirect guard lives in
+    // ProtectedLayoutClient and uses the client router, so this no longer
+    // hard-reloads the page.
+    if (authStatus !== "AUTHENTICATED") return;
     getTasks().then(setTasks).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+  }, [authStatus]);
 
   // Computed stats
   const completed  = tasks.filter(t => t.status === 'completed').length;

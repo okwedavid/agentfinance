@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { createTask, getRuntimeStatus, getTasks, isLoggedIn } from "@/lib/api";
+import { createTask, getRuntimeStatus, getTasks } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { BottomNav, PageFooter, TopNav } from "@/components/layout/Nav";
 
@@ -13,6 +14,7 @@ const PLAYBOOKS = [
 ];
 
 export default function AgentsPage() {
+  const { status: authStatus } = useAuth();
   const { connectionStatus } = useWebSocket();
   const [runtime, setRuntime] = useState<any>(null);
   const [tasks, setTasks] = useState<any[]>([]);
@@ -20,14 +22,13 @@ export default function AgentsPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    if (!isLoggedIn()) {
-      window.location.href = "/login";
-      return;
-    }
+    // Data loads only on a confirmed session; the redirect guard lives in
+    // ProtectedLayoutClient and uses the client router.
+    if (authStatus !== "AUTHENTICATED") return;
 
     void getRuntimeStatus().then(setRuntime).catch(() => setRuntime(null));
     void getTasks().then(setTasks).catch(() => setTasks([]));
-  }, []);
+  }, [authStatus]);
 
   async function launch(playbook: (typeof PLAYBOOKS)[number]) {
     setLaunching(playbook.id);

@@ -14,7 +14,6 @@ import {
   getRuntimeStatus,
   getTasks,
   getWalletBalanceForNetwork,
-  isLoggedIn,
   preparePayout,
   refreshPayoutStatus,
   saveWalletAddress,
@@ -90,7 +89,7 @@ function PayoutStatusPill({ status }: { status: string }) {
 }
 
 export default function WalletPage() {
-  const { user, refresh, isAdmin } = useAuth();
+  const { user, refresh, isAdmin, status: authStatus } = useAuth();
   const [chainId, setChainId] = useState("ethereum");
   const [wallet, setWallet] = useState("");
   const [input, setInput] = useState("");
@@ -140,13 +139,13 @@ export default function WalletPage() {
   const { connectionStatus } = useWebSocket({ onEvent: onSocketEvent });
 
   useEffect(() => {
-    if (!isLoggedIn()) {
-      window.location.href = "/login";
-      return;
-    }
+    // Data loads only on a confirmed session; the redirect guard lives in
+    // ProtectedLayoutClient and uses the client router, so moving between pages
+    // no longer hard-reloads the app.
+    if (authStatus !== "AUTHENTICATED") return;
 
     void Promise.all([refreshRuntime(), refreshTasks(), refreshPayoutsList(), refreshReward(), refresh()]);
-  }, []);
+  }, [authStatus]);
 
   useEffect(() => {
     const preferred = runtime?.preferredNetwork || user?.preferredNetwork;

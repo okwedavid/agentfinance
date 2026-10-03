@@ -45,8 +45,8 @@ export default function FactoryPage() {
   };
 
   useEffect(() => {
-    // Load only once the session is CONFIRMED by the server. A pending auth check
-    // is not a logout, so this must never redirect on AUTH_CHECKING.
+    // Load only once the session is CONFIRMED by the server. The redirect guard
+    // itself lives in ProtectedLayoutClient (root layout).
     if (authStatus !== "AUTHENTICATED") return;
     fetchProducts();
   }, [authStatus]);

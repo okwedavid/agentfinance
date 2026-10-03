@@ -9,7 +9,6 @@ import {
   deleteTask,
   getRuntimeStatus,
   getTasks,
-  isLoggedIn,
 } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -189,11 +188,9 @@ export default function DashboardPage() {
 
   // Load data only once the session is CONFIRMED.
   //
-  // The previous guard read the presence of a stored token and redirected
-  // immediately when it was absent. With a cookie-based session that check races
-  // /auth/me: the page could declare "signed out" before the cookie had been
-  // validated, which is precisely the "reaches the dashboard, then logs out"
-  // symptom. `status === "UNAUTHENTICATED"` means the server has already said no.
+  // The redirect guard now lives in ProtectedLayoutClient (mounted once in the
+  // root layout) so every route behaves identically. This effect only gates
+  // DATA loading, and "pending" is never treated as "signed out".
   useEffect(() => {
     if (status !== "AUTHENTICATED") return;
 

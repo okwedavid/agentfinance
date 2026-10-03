@@ -28,13 +28,16 @@
 
 export const SESSION_COOKIE_NAME = 'af_session';
 
-// A second, deliberately script-readable cookie that carries NO authority. It
-// exists so the frontend can answer "might there be a session?" without reading
-// the HttpOnly cookie, which is what stops an auth guard from redirecting a
-// signed-in user to /login on every hard refresh. It proves nothing: the server
-// still validates the HttpOnly session cookie on every authenticated request, and
-// this cookie can be forged by any script without granting access.
-export const SESSION_MARKER_COOKIE = 'af_session_present';
+// NOTE: there is deliberately NO second "marker" cookie.
+//
+// An earlier revision shipped one, readable by script, on the theory that the
+// frontend needed a cheap hint for "might a session exist?". That cannot work:
+// this cookie is set on the BACKEND host with no Domain attribute, so it is
+// host-scoped and a page on the frontend origin can never see it. The frontend
+// guard therefore read false on every load, skipped the /auth/me call, and
+// treated every page load as a logout.
+//
+// The frontend now asks the server, which is the only place the answer exists.
 
 // 7 days, matching the JWT lifetime so the cookie and the token agree.
 export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
@@ -88,16 +91,6 @@ function sameSiteValue(value) {
 }
 
 /**
- * The non-authoritative marker cookie. Readable by script by design; see
- * SESSION_MARKER_COOKIE.
- */
-export function buildSessionMarkerCookie(isProduction = isProduction()) {
-  const base = `${SESSION_MARKER_COOKIE}=1; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`;
-  // No HttpOnly: the whole point is that the page can see it.
-  return isProduction ? `${base}; Secure; SameSite=None` : `${base}; SameSite=Lax`;
-}
-
-/**
  * A Set-Cookie value that deletes the cookie. The attributes MUST match those
  * used when setting it, or the browser treats it as a different cookie and the
  * original survives.
@@ -111,10 +104,6 @@ export function clearSessionCookie() {
     'Secure',
     'SameSite=None',
   ].join('; ');
-}
-
-export function clearSessionMarkerCookie() {
-  return `${SESSION_MARKER_COOKIE}=; Path=/; Max-Age=0; Secure; SameSite=None`;
 }
 
 /**
@@ -142,13 +131,11 @@ export function readSessionCookie(cookieHeader) {
  * Returns the response so call sites read as `return setSessionCookie(res, token)`.
  * In non-production the Secure/SameSite=None pair is dropped, because a local
  * http:// origin cannot set SameSite=None and the cookie would be silently
- * discarded — which would make local testing impossible without also teaching
+ * discarded, which would make local testing impossible without also teaching
  * the code to lie about production.
  */
 export function setSessionCookie(res, token) {
-  const prod = isProduction();
-  appendSetCookie(res, prod ? buildSessionCookie(token) : buildDevSessionCookie(token));
-  appendSetCookie(res, buildSessionMarkerCookie(prod));
+  appendSetCookie(res, isProduction() ? buildSessionCookie(token) : buildDevSessionCookie(token));
   return res;
 }
 
@@ -160,14 +147,11 @@ function buildDevSessionCookie(token) {
 }
 
 export function clearSessionCookieHeader(res) {
-  const prod = isProduction();
   appendSetCookie(
     res,
-    prod ? clearSessionCookie() : `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
-  );
-  appendSetCookie(
-    res,
-    prod ? clearSessionMarkerCookie() : `${SESSION_MARKER_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`,
+    isProduction()
+      ? clearSessionCookie()
+      : `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
   );
   return res;
 }

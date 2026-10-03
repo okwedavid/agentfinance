@@ -28,13 +28,6 @@ export const WS_BASE = WS_URL;
  * script-readable form, it is never written to storage, and it is scoped to the
  * WebSocket handshake.
  */
-/**
- * Marker cookie name. Must match SESSION_MARKER_COOKIE in sessionCookie.js.
- * Carries no authority — it only tells the page a session might exist so a guard
- * does not redirect before /auth/me has answered.
- */
-const SESSION_MARKER_COOKIE = 'af_session_present';
-
 let wsTicket: { token: string; expiresAt: number } | null = null;
 
 export function getWebSocketTicket(): string | null {
@@ -55,22 +48,21 @@ export function clearWebSocketTicket() {
 }
 
 /**
- * Whether a session may exist.
+ * Whether the user is authenticated.
  *
- * Intentionally NOT a proof of authentication. The cookie is HttpOnly, so the
- * page cannot inspect it; the only authority on whether the user is logged in is
- * `GET /auth/me`. This helper exists solely so a guard can skip a pointless
- * redirect on a page the user cannot possibly be authenticated on, and callers
- * must still resolve the real state before rendering protected UI.
+ * There is deliberately NO client-side way to answer this. The session is an
+ * HttpOnly cookie set by the BACKEND on the backend host, with no `Domain`
+ * attribute so it stays host-scoped. Cookies are host-scoped, so a page on
+ * agentfinance.onrender.com can never see it, and any attempt to sniff a
+ * "marker" cookie returns false on every load regardless of the session.
+ *
+ * An earlier revision did exactly that and shipped a regression: the guard
+ * short-circuited on the missing marker, never called /auth/me, and treated
+ * every page load as signed out.
+ *
+ * The only authority is `GET /auth/me`. The cookie is attached automatically via
+ * credentials:'include', and a 401 is the honest answer.
  */
-export function isLoggedIn(): boolean {
-  if (typeof document === 'undefined') return false;
-  // A visible marker cookie set alongside the HttpOnly session cookie. Carries
-  // no authority: the server still validates the HttpOnly cookie on every call.
-  return document.cookie
-    .split(';')
-    .some((part) => part.trim().startsWith(`${SESSION_MARKER_COOKIE}=`));
-}
 
 export function logout() {
   clearWebSocketTicket();

@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { BottomNav, PageFooter, TopNav } from "@/components/layout/Nav";
 import { useAuth } from "@/context/AuthContext";
-import { getPayouts, getRuntimeStatus, getTasks, isLoggedIn, updateProfile } from "@/lib/api";
+import { getPayouts, getRuntimeStatus, getTasks, updateProfile } from "@/lib/api";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
 function sanitizePlainText(value: unknown) {
@@ -25,7 +25,7 @@ const NETWORK_LABELS: Record<string, string> = {
 };
 
 export default function ProfilePage() {
-  const { user, refresh, logout } = useAuth();
+  const { user, refresh, logout, status: authStatus } = useAuth();
   const [tasks, setTasks] = useState<any[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
   const [runtime, setRuntime] = useState<any>(null);
@@ -37,18 +37,20 @@ export default function ProfilePage() {
   const { connectionStatus } = useWebSocket();
 
   useEffect(() => {
-    if (!isLoggedIn()) {
-      window.location.href = "/login";
-      return;
-    }
+    // Data loads only on a confirmed session; the redirect guard lives in
+    // ProtectedLayoutClient and uses the client router.
+    if (authStatus !== "AUTHENTICATED") return;
 
     void Promise.all([
       getTasks().then(setTasks).catch(() => setTasks([])),
       getPayouts().then(setPayouts).catch(() => setPayouts([])),
       getRuntimeStatus().then(setRuntime).catch(() => setRuntime(null)),
-      refresh(),
     ]);
-  }, []);
+  }, [authStatus]);
+
+  useEffect(() => {
+    if (authStatus === "AUTHENTICATED") void refresh();
+  }, [authStatus, refresh]);
 
   useEffect(() => {
     setDisplayName(user?.displayName || user?.username || "");

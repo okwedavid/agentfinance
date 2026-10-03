@@ -5,7 +5,6 @@ import {
   deleteAllTasks,
   demoteUser,
   getRuntimeStatus,
-  isLoggedIn,
   promoteUser,
   saveWalletAddress,
 } from "@/lib/api";
@@ -42,7 +41,7 @@ const PROVIDER_GROUPS = [
 ];
 
 export default function SettingsPage() {
-  const { isAdmin, isSuperAdmin, deleteAccount, logout } = useAuth();
+  const { isAdmin, isSuperAdmin, deleteAccount, logout, status: authStatus } = useAuth();
   const { connectionStatus } = useWebSocket();
   const [settings, setSettings] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState<string>("");
@@ -52,11 +51,7 @@ export default function SettingsPage() {
   const [adminUsername, setAdminUsername] = useState("");
 
   useEffect(() => {
-    if (!isLoggedIn()) {
-      window.location.href = "/login";
-      return;
-    }
-
+    // Local preference load needs no session at all.
     const stored = localStorage.getItem("af_settings");
     if (stored) {
       try {
@@ -75,7 +70,9 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (!isLoggedIn()) return;
+    // Runtime data only on a confirmed session; the redirect guard lives in
+    // ProtectedLayoutClient and uses the client router.
+    if (authStatus !== "AUTHENTICATED") return;
     setLoadingRuntime(true);
     getRuntimeStatus()
       .then(setRuntime)

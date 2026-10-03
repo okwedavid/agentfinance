@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "../styles/globals.css";
 import { AuthProvider } from "@/context/AuthContext";
+import ProtectedLayoutClient from "@/components/ProtectedLayoutClient";
 
 export const metadata: Metadata = {
   title: "AgentFinance - Autonomous Agent Operating System",
@@ -26,7 +27,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
       </head>
       <body className="bg-[#050c18] text-white antialiased overflow-x-hidden">
-        <AuthProvider>{children}</AuthProvider>
+        {/* Single guard for every route. It renders public paths immediately and
+            redirects only from a CONFIRMED UNAUTHENTICATED state, so navigating
+            between pages preserves the session instead of reloading the app. */}
+        <AuthProvider>
+          <ProtectedLayoutClient>{children}</ProtectedLayoutClient>
+        </AuthProvider>
       </body>
     </html>
   );

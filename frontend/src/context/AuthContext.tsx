@@ -2,7 +2,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   getMe,
-  isLoggedIn,
   login as apiLogin,
   logout as apiLogout,
   logoutSession as apiLogoutSession,
@@ -105,18 +104,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     const checkId = ++checkIdRef.current;
 
-    // No marker cookie means no session is even possible, so skip the round trip.
-    // This is an optimisation only: the server stays the authority, so a forged
-    // marker cookie still fails every authenticated call.
-    if (!isLoggedIn()) {
-      if (checkId === checkIdRef.current) {
-        setUser(null);
-        setIsNewUser(false);
-        setStatus("UNAUTHENTICATED");
-      }
-      return;
-    }
-
+    // Always ask the server. There is no client-side signal that can answer this
+    // question: the session cookie is HttpOnly and set on the backend's host, so
+    // the page cannot read it and must not guess. An earlier revision short-
+    // circuited on a "marker" cookie that the frontend could never see, which
+    // made every reload look like a logout.
     try {
       const me = await getMe();
       if (checkId !== checkIdRef.current) return;

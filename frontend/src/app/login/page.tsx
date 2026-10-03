@@ -27,12 +27,29 @@ export default function LoginPage() {
   const activeProviders = providers.filter((p) => p.available);
   const unavailableProviders = providers.filter((p) => !p.available);
 
-  // Send an already-authenticated visitor to the dashboard — but only on a
-  // CONFIRMED session. The old check ran on mount and inspected client storage,
-  // which raced /auth/me and could bounce a valid session to /login.
+  // Send an already-authenticated visitor onward — but only on a CONFIRMED
+  // session, and only after the auth check has actually completed. The previous
+  // check ran on mount against client storage, which raced /auth/me and could
+  // bounce a valid session back here.
   useEffect(() => {
-    if (authStatus === "AUTHENTICATED") router.replace("/dashboard");
+    if (authStatus === "AUTHENTICATED") router.replace(safeNextPath() ?? "/dashboard");
   }, [authStatus, router]);
+
+  /**
+   * Where to go after signing in.
+   *
+   * The guard passes the attempted route as `?next=`. Only same-site absolute
+   * paths are honoured: accepting an absolute URL here would turn the login page
+   * into an open redirect, sending a freshly authenticated user (and their
+   * referrer) to an attacker-controlled site.
+   */
+  function safeNextPath(): string | null {
+    if (typeof window === "undefined") return null;
+    const raw = new URLSearchParams(window.location.search).get("next");
+    if (!raw) return null;
+    if (!raw.startsWith("/") || raw.startsWith("//")) return null;
+    return raw;
+  }
 
   useEffect(() => {
     getOAuthProviders()
@@ -66,7 +83,9 @@ export default function LoginPage() {
     try {
       if (mode === 'login') await login(username.trim(), password);
       else await register(username.trim(), email.trim(), password);
-      router.replace('/dashboard');
+      // Honour the route the guard was protecting, so an interrupted deep link
+      // resumes where the user intended instead of always landing on /dashboard.
+      router.replace(safeNextPath() ?? '/dashboard');
     } catch (e: any) {
       setError(e.message || 'Something went wrong');
     } finally { setLoading(false); }

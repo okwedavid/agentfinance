@@ -248,32 +248,38 @@ test('clearing the cookie matches the set attributes so deletion works', () => {
   assert.match(clear, /Max-Age=0/);
 });
 
-test('the marker cookie is script-readable and carries no session token', () => {
-  const marker = cookie.buildSessionMarkerCookie(true);
-  assert.match(marker, /^af_session_present=1/);
-  assert.doesNotMatch(marker, /HttpOnly/, 'the whole point is that the page can read it');
-  assert.ok(!marker.includes('jwt'), 'the marker must not contain any credential');
-});
-
-test('setSessionCookie writes both cookies without clobbering', () => {
+test('only one cookie is ever set: the session cookie', () => {
+  // A second, script-readable "marker" cookie was removed. It could not work: it
+  // is set on the BACKEND host with no Domain attribute, so it is host-scoped
+  // and a frontend page can never see it. The frontend guard read false on every
+  // load, skipped /auth/me, and logged the user out on every navigation.
   const res = makeRes();
   cookie.setSessionCookie(res, 'tok');
-  assert.ok(res.cookieValues().includes('af_session'));
-  assert.ok(res.cookieValues().includes('af_session_present'));
-  const httpOnly = res.raw('af_session');
-  assert.match(httpOnly, /HttpOnly/);
+  assert.deepEqual(res.cookieValues(), ['af_session']);
 });
 
-test('a second Set-Cookie appends rather than replacing the first', () => {
-  // Logout clears both cookies; assigning instead of appending would drop the
-  // first value and leave a live cookie behind.
+test('setSessionCookie writes the session cookie as HttpOnly', () => {
   const res = makeRes();
   cookie.setSessionCookie(res, 'tok');
+  assert.deepEqual(res.cookieValues(), ['af_session']);
+  assert.match(res.raw('af_session'), /HttpOnly/);
+});
+
+test('clearSessionCookieHeader sets exactly one clearing cookie', () => {
+  const res = makeRes();
   cookie.clearSessionCookieHeader(res);
-  const all = res.cookies;
-  assert.ok(all.some((c) => c.startsWith('af_session=') && c.includes('Max-Age=')));
-  assert.ok(all.some((c) => c.startsWith('af_session=;')), 'session cookie is cleared');
-  assert.ok(all.some((c) => c.startsWith('af_session_present=;')), 'marker cookie is cleared');
+  assert.deepEqual(res.cookieValues(), ['af_session']);
+  assert.match(res.raw('af_session'), /Max-Age=0/);
+});
+
+test('logout clears the cookie without discarding an unrelated Set-Cookie', () => {
+  // A second Set-Cookie must append. Assigning would drop the first value, and a
+  // dropped clearing-cookie leaves a live session in the browser.
+  const res = makeRes();
+  res.setHeader('Set-Cookie', ['some_other=value; Path=/']);
+  cookie.clearSessionCookieHeader(res);
+  assert.ok(res.cookies.some((c) => c.startsWith('some_other=')), 'unrelated cookie preserved');
+  assert.ok(res.cookies.some((c) => c.startsWith('af_session=;')), 'session cookie cleared');
 });
 
 test('readSessionCookie parses the cookie and tolerates malformed headers', () => {
